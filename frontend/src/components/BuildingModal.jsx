@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { isValidCountryId } from '../utils/countryUtils';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { API_BASE_URL, apiRequest } from '../config/api';
+import * as turf from '@turf/turf';
 
 const BUILDING_TYPES = [
   { value: 'house', label: 'Casa', emoji: '🏠', description: 'Residência básica' },
@@ -18,6 +19,7 @@ export default function BuildingModal({
   countryId, 
   countryName, 
   position,
+  countryGeometry, // ✅ Geometria do país para calcular centroide se necessário
   onBuild 
 }) {
   const [selectedType, setSelectedType] = useState('house');
@@ -64,23 +66,124 @@ export default function BuildingModal({
     }
   }, [selectedType, level, isOpen]);
 
+  // ✅ Função para gerar ponto ALEATÓRIO ESPALHADO dentro do país (não apenas centroide)
+  const generateRandomPositionInCountry = async () => {
+    if (!countryGeometry) return null;
+    
+    try {
+      const polygon = turf.feature(countryGeometry);
+      const bbox = turf.bbox(polygon); // [minLng, minLat, maxLng, maxLat]
+      
+      // ✅ Tentar gerar ponto aleatório dentro do polígono (até 50 tentativas)
+      for (let attempt = 0; attempt < 50; attempt++) {
+        // Gerar coordenada aleatória dentro do bounding box
+        const randomLng = bbox[0] + Math.random() * (bbox[2] - bbox[0]);
+        const randomLat = bbox[1] + Math.random() * (bbox[3] - bbox[1]);
+        
+        const point = turf.point([randomLng, randomLat]);
+        
+        // Verificar se está dentro do polígono
+        let isInside = false;
+        if (countryGeometry.type === 'Polygon') {
+          const poly = turf.polygon(countryGeometry.coordinates);
+          isInside = turf.booleanPointInPolygon(point, poly);
+        } else if (countryGeometry.type === 'MultiPolygon') {
+          for (const coords of countryGeometry.coordinates) {
+            const poly = turf.polygon(coords);
+            if (turf.booleanPointInPolygon(point, poly)) {
+              isInside = true;
+              break;
+            }
+          }
+        }
+        
+        if (isInside) {
+          console.log(`✅ Posição aleatória gerada no país (tentativa ${attempt + 1}):`, { lat: randomLat, lng: randomLng });
+          return { lat: randomLat, lng: randomLng };
+        }
+      }
+      
+      // ✅ Se não conseguiu gerar ponto aleatório, usar centroide como fallback
+      console.warn('⚠️ Não conseguiu gerar ponto aleatório, usando centroide');
+      const centroid = turf.centroid(polygon);
+      const [lng, lat] = centroid.geometry.coordinates;
+      return { lat, lng };
+    } catch (error) {
+      console.error('Erro ao gerar posição aleatória no país:', error);
+      return null;
+    }
+  };
+  
+  // ✅ Função para calcular centroide do país (fallback)
+  const calculateCountryCentroid = () => {
+    if (!countryGeometry) return null;
+    
+    try {
+      const polygon = turf.feature(countryGeometry);
+      const centroid = turf.centroid(polygon);
+      const [lng, lat] = centroid.geometry.coordinates;
+      return { lat, lng };
+    } catch (error) {
+      console.error('Erro ao calcular centroide do país:', error);
+      return null;
+    }
+  };
+
   const handleBuild = async () => {
-    // ✅ Validar dados antes de construir
-    if (!isValidCountryId(countryId) || countryId === 'UNK') {
+    // ✅ Validar dados antes de construir - validação mais flexível
+    // Aceitar se tiver countryId válido OU countryName válido
+    const hasValidCountryId = countryId && countryId !== 'UNK' && countryId !== 'XXX' && countryId.trim().length > 0;
+    const hasValidCountryName = countryName && countryName !== 'País Desconhecido' && countryName !== 'Local Desconhecido' && countryName.trim().length > 0;
+    
+    if (!hasValidCountryId && !hasValidCountryName) {
       alert('⚠️ País não identificado!\n\nPor favor, clique diretamente em um país no mapa antes de construir.\n\nO sistema precisa identificar em qual país você está construindo.');
-      console.error('❌ countryId inválido ou UNK:', countryId);
+      console.error('❌ countryId e countryName inválidos:', { countryId, countryName });
+      return;
+    }
+    
+    // ✅ Garantir que sempre tenhamos nome e ID válidos
+    // Se não tiver nome mas tiver ID, usar um nome padrão
+    let finalCountryName = hasValidCountryName ? countryName : (hasValidCountryId ? `País ${countryId}` : 'País Selecionado');
+    
+    // Se não tiver ID válido mas tiver nome, gerar ID a partir do nome
+    let finalCountryId = hasValidCountryId ? countryId : null;
+    if (!finalCountryId && hasValidCountryName) {
+      const normalized = countryName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+      if (normalized.length >= 3) {
+        finalCountryId = normalized.substring(0, 3);
+      } else if (normalized.length > 0) {
+        finalCountryId = (normalized + 'XXX').substring(0, 3);
+      }
+    }
+    
+    // Se ainda não tiver ID, usar fallback genérico (não deve acontecer, mas por segurança)
+    if (!finalCountryId || finalCountryId === 'UNK' || finalCountryId === 'XXX') {
+      console.error('⚠️ Não foi possível gerar ID válido para o país:', { countryId, countryName });
+      alert('⚠️ Erro ao identificar o país!\n\nPor favor, clique novamente no país no mapa e tente construir novamente.');
       return;
     }
 
-    if (!countryName || countryName === 'País Desconhecido' || countryName === 'Local Desconhecido') {
-      alert('⚠️ Nome do país inválido!\n\nPor favor, clique diretamente em um país no mapa para identificá-lo corretamente.');
-      return;
-    }
-
-    // Validar posição
-    if (!position || !position.lat || !position.lng) {
-      alert('⚠️ Posição inválida!\n\nPor favor, clique no mapa para definir a localização da construção.');
-      return;
+    // ✅ IMPORTANTE: Se não houver posição, gerar posição ALEATÓRIA ESPALHADA pelo país
+    // Isso garante que múltiplas construções sejam ESPALHADAS, não concentradas
+    let finalPosition = position;
+    if (!finalPosition || !finalPosition.lat || !finalPosition.lng || (finalPosition.lat === 0 && finalPosition.lng === 0)) {
+      console.log('📍 Posição não definida, gerando posição ALEATÓRIA ESPALHADA pelo país...');
+      finalPosition = await generateRandomPositionInCountry();
+      
+      if (!finalPosition) {
+        // Fallback para centroide se não conseguir gerar aleatório
+        finalPosition = calculateCountryCentroid();
+        if (!finalPosition) {
+          alert('⚠️ Não foi possível calcular a posição automaticamente!\n\nPor favor, clique no mapa dentro do país para definir a localização da construção.');
+          return;
+        }
+      }
+      
+      console.log('✅ Posição ALEATÓRIA gerada no país:', finalPosition);
     }
 
     setLoading(true);
@@ -89,14 +192,15 @@ export default function BuildingModal({
       const userId = localStorage.getItem('userId') || 'test-user-id';
 
       // ✅ Usar apiRequest para melhor tratamento de erros
+      // ✅ IMPORTANTE: O servidor vai deduzir o custo da carteira automaticamente
       const { data } = await apiRequest('/buildings/build', {
         method: 'POST',
         body: JSON.stringify({
-          countryId: countryId,
-          countryName: countryName,
+          countryId: finalCountryId,
+          countryName: finalCountryName,
           type: selectedType,
-          lat: position.lat,
-          lng: position.lng,
+          lat: finalPosition.lat,
+          lng: finalPosition.lng,
           level,
           userId: userId
         })
@@ -177,16 +281,31 @@ export default function BuildingModal({
             <div className="text-base font-semibold text-white bg-gray-700 px-3 py-2 rounded-lg">
               {position ? (
                 `${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`
+              ) : countryGeometry ? (
+                <span className="text-amber-300">📍 Será construído no centro do país automaticamente</span>
               ) : (
-                'Clique no mapa para definir'
+                <span className="text-gray-400">Clique no mapa para definir a posição ou será usado o centro do país</span>
               )}
-              {countryName && countryName !== 'País Desconhecido' && countryName !== 'Local Desconhecido' && countryId !== 'UNK' ? (
+              {/* ✅ Validação melhorada: aceitar país se tiver nome válido OU ID válido */}
+              {(countryName && countryName !== 'País Desconhecido' && countryName !== 'Local Desconhecido' && countryName.trim().length > 0) || 
+               (countryId && countryId !== 'UNK' && countryId !== 'XXX' && countryId.trim().length > 0) ? (
                 <div className="text-xs text-green-400 mt-1 font-semibold">
-                  ✅ {countryName} {countryId && `(${countryId})`}
+                  ✅ {countryName && countryName !== 'País Desconhecido' && countryName !== 'Local Desconhecido' ? countryName : 'País Selecionado'} 
+                  {countryId && countryId !== 'UNK' && countryId !== 'XXX' && ` (${countryId})`}
+                  {!position && countryGeometry && (
+                    <div className="text-xs text-amber-300 mt-1 font-normal">
+                      💡 A construção será colocada automaticamente no centro do país
+                    </div>
+                  )}
+                  {!position && !countryGeometry && (
+                    <div className="text-xs text-amber-300 mt-1 font-normal">
+                      💡 Clique no mapa para definir a posição da construção
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-xs text-red-400 mt-1">
-                  ⚠️ País não identificado - Clique diretamente em um país no mapa
+                  ⚠️ País não identificado - Clique diretamente em um país no mapa para selecioná-lo
                 </div>
               )}
             </div>
@@ -251,12 +370,12 @@ export default function BuildingModal({
           >
             Cancelar
           </button>
-          <button
+            <button
             onClick={handleBuild}
-            disabled={loading || !position || (position.lat === 0 && position.lng === 0)}
+            disabled={loading || (!countryId || countryId === 'UNK' || countryId === 'XXX') || (!countryName || countryName === 'País Desconhecido')}
             className="flex-1 px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-semibold shadow-lg"
           >
-            {loading ? '⏳ Construindo...' : '✅ Construir'}
+            {loading ? '⏳ Construindo...' : `✅ Construir (${cost.toLocaleString()} VAL)`}
           </button>
         </div>
       </div>

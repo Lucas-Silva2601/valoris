@@ -26,6 +26,35 @@ const generateSkinColor = (npcId, skinColorFromDB = null) => {
   return SKIN_COLORS[colorIndex];
 };
 
+// Animação CSS global (adicionar apenas uma vez)
+let animationStyleAdded = false;
+const addAnimationStyle = () => {
+  if (animationStyleAdded || typeof document === 'undefined') return;
+  
+  const styleId = 'npc-bounce-animation';
+  if (document.getElementById(styleId)) return;
+  
+  const style = document.createElement('style');
+  style.id = styleId;
+  style.textContent = `
+    @keyframes npcBounce {
+      0%, 100% {
+        transform: translateY(0px);
+      }
+      50% {
+        transform: translateY(-3px);
+      }
+    }
+    .npc-walking {
+      will-change: transform;
+      animation-timing-function: ease-in-out;
+      animation-iteration-count: infinite;
+    }
+  `;
+  document.head.appendChild(style);
+  animationStyleAdded = true;
+};
+
 /**
  * ✅ Criar ícone customizado para NPC - retângulos coloridos
  * Retângulo pequeno (6px x 10px) que parece uma pessoa vista de cima
@@ -38,16 +67,26 @@ const createNPCIcon = (npcId, status, skinColor = null) => {
   const width = 6;
   const height = 10;
   
+  // Animação de pulinhos (bounce) para simular caminhada
+  // Usar hash do ID para delay consistente
+  const hash = (npcId || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const animationDelay = (hash % 50) / 100; // 0-0.5s delay
+  const animationDuration = 0.6 + ((hash % 40) / 100); // 0.6-1.0s
+  
+  // Adicionar estilo de animação global
+  addAnimationStyle();
+  
   return L.divIcon({
-    className: 'custom-npc-icon',
+    className: 'custom-npc-icon npc-walking',
     html: `<div style="
       width: ${width}px; 
       height: ${height}px; 
-      background-color: ${skinColor}; 
+      background-color: ${color}; 
       border: 1px solid rgba(0,0,0,0.4);
       border-radius: 2px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.5);
-      transition: transform 0.3s ease;
+      animation: npcBounce ${animationDuration}s ease-in-out infinite;
+      animation-delay: ${animationDelay}s;
     "></div>`,
     iconSize: [width, height],
     iconAnchor: [width / 2, height / 2],

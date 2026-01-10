@@ -1,5 +1,5 @@
 import * as npcService from '../services/npcService.js';
-import { checkConnection } from '../config/database.js';
+import { checkConnection } from '../config/supabase.js';
 
 // ✅ FALLBACK: NPCs mockados para quando o banco estiver offline
 const getMockNPCs = () => {
@@ -35,7 +35,7 @@ export const getNPCsByCountry = async (req, res) => {
     
     // ✅ Verificar se banco está conectado
     if (!checkConnection()) {
-      console.warn('⚠️  MongoDB offline. Retornando NPCs mockados.');
+      console.warn('⚠️  Supabase offline. Retornando NPCs mockados.');
       const mockNPCs = getMockNPCs().filter(npc => npc.countryId === countryId);
       return res.json({ npcs: mockNPCs, _isOffline: true });
     }
@@ -88,7 +88,7 @@ export const getAllNPCs = async (req, res) => {
   try {
     // ✅ Verificar se banco está conectado
     if (!checkConnection()) {
-      console.warn('⚠️  MongoDB offline. Retornando NPCs mockados.');
+      console.warn('⚠️  Supabase offline. Retornando NPCs mockados.');
       const mockNPCs = getMockNPCs();
       return res.json({ npcs: mockNPCs, _isOffline: true });
     }

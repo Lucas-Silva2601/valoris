@@ -14,29 +14,51 @@ export function getCountryId(feature) {
   const props = feature.properties;
 
   // Tentar códigos ISO primeiro (prioridade)
-  if (props.ISO_A3 && typeof props.ISO_A3 === 'string' && props.ISO_A3.length === 3) {
-    return props.ISO_A3.toUpperCase();
+  if (props.ISO_A3 && typeof props.ISO_A3 === 'string' && props.ISO_A3.trim().length === 3) {
+    return props.ISO_A3.trim().toUpperCase();
   }
   
-  if (props.ADM0_A3 && typeof props.ADM0_A3 === 'string' && props.ADM0_A3.length === 3) {
-    return props.ADM0_A3.toUpperCase();
+  if (props.ADM0_A3 && typeof props.ADM0_A3 === 'string' && props.ADM0_A3.trim().length === 3) {
+    return props.ADM0_A3.trim().toUpperCase();
   }
   
-  if (props.ISO3 && typeof props.ISO3 === 'string' && props.ISO3.length === 3) {
-    return props.ISO3.toUpperCase();
+  if (props.ISO3 && typeof props.ISO3 === 'string' && props.ISO3.trim().length === 3) {
+    return props.ISO3.trim().toUpperCase();
   }
 
-  // Tentar código ISO de 2 letras
-  if (props.ISO_A2 && typeof props.ISO_A2 === 'string' && props.ISO_A2.length === 2) {
-    // Padronizar para 3 caracteres adicionando um caractere
-    return (props.ISO_A2 + 'X').toUpperCase();
+  // Tentar código ISO de 2 letras e expandir para 3
+  if (props.ISO_A2 && typeof props.ISO_A2 === 'string' && props.ISO_A2.trim().length === 2) {
+    return (props.ISO_A2.trim() + 'X').toUpperCase();
   }
 
-  // Se não houver código ISO, gerar ID baseado no nome
-  const countryName = props.NAME || props.NAME_EN || props.NAME_LONG || props.NAME_ALT || 'UNKNOWN';
+  // Se não houver código ISO, gerar ID baseado no nome (sempre retornar algo válido)
+  // Tentar várias propriedades de nome possíveis
+  const countryName = props.name || props.Name || props.NAME || props.NAME_EN || props.NAME_LONG || props.NAME_ALT || props.ADMIN || null;
   
-  // Gerar hash simples do nome (máximo 3 caracteres)
-  return generateShortId(countryName);
+  if (countryName && typeof countryName === 'string' && countryName.trim().length > 0) {
+    const id = generateShortId(countryName.trim());
+    // Se gerou um ID válido (não é 'XXX'), retornar
+    if (id && id !== 'XXX' && id.length === 3) {
+      return id;
+    }
+  }
+
+  // Fallback: usar uma propriedade única do feature como ID (hash simples)
+  // Usar índice do feature se disponível, ou hash das coordenadas
+  if (feature.geometry && feature.geometry.coordinates) {
+    const coordsStr = JSON.stringify(feature.geometry.coordinates).substring(0, 50);
+    let hash = 0;
+    for (let i = 0; i < coordsStr.length; i++) {
+      hash = ((hash << 5) - hash) + coordsStr.charCodeAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const shortHash = Math.abs(hash).toString(36).substring(0, 3).toUpperCase().padEnd(3, 'X');
+    return shortHash;
+  }
+
+  // Último fallback: retornar 'UNK' mas isso não deveria acontecer
+  console.warn('⚠️ Não foi possível gerar ID para país:', props);
+  return 'UNK';
 }
 
 /**

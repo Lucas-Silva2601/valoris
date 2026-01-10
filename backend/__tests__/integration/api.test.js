@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import request from 'supertest';
 import express from 'express';
-import connectDB from '../../config/database.js';
+import connectDB from '../../config/supabase.js';
 
 // Configurar app de teste
 const app = express();

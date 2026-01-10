@@ -4,7 +4,8 @@
 
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import mongoSanitize from 'express-mongo-sanitize';
+// express-mongo-sanitize removido - não necessário com Supabase (PostgreSQL)
+// import mongoSanitize from 'express-mongo-sanitize';
 import xss from 'xss-clean';
 import hpp from 'hpp';
 
@@ -46,9 +47,13 @@ export const helmetConfig = helmet({
 });
 
 /**
- * Sanitização de dados MongoDB
+ * Sanitização de dados (não necessário com Supabase/PostgreSQL, mas mantido para compatibilidade)
+ * PostgreSQL/Supabase já tem proteção contra NoSQL injection por padrão
  */
-export const mongoSanitizeConfig = mongoSanitize();
+export const mongoSanitizeConfig = (req, res, next) => {
+  // Middleware vazio - Supabase usa PostgreSQL que não precisa de sanitização MongoDB
+  next();
+};
 
 /**
  * Proteção XSS

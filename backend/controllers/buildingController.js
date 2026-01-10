@@ -112,18 +112,29 @@ export const buildBuilding = async (req, res) => {
     );
 
     // ✅ Emitir atualização via Socket.io para aparecer imediatamente no mapa
-    const { io } = await import('../socket/socketHandler.js');
-    io.emit('building:created', {
-      building: {
-        buildingId: building.buildingId,
-        type: building.type,
-        position: building.position,
-        countryId: building.countryId,
-        countryName: building.countryName,
-        level: building.level,
-        ownerId: building.ownerId
+    try {
+      const { getIO } = await import('../socket/socketHandler.js');
+      const io = getIO();
+      
+      if (io) {
+        io.emit('building:created', {
+          building: {
+            buildingId: building.buildingId,
+            type: building.type,
+            position: building.position,
+            countryId: building.countryId,
+            countryName: building.countryName,
+            level: building.level,
+            ownerId: building.ownerId
+          }
+        });
+      } else {
+        console.warn('⚠️ Socket.io não está inicializado. Evento building:created não será enviado.');
       }
-    });
+    } catch (error) {
+      // Não bloquear a resposta se houver erro no Socket.io
+      console.error('Erro ao emitir evento Socket.io:', error);
+    }
 
     res.json({
       success: true,
@@ -149,12 +160,14 @@ export const getBuildingsByCountry = async (req, res) => {
 
 export const getMyBuildings = async (req, res) => {
   try {
-    const userId = req.user.id;
+    // ✅ FASE DE TESTE: Permitir userId de parâmetro ou header
+    const userId = req.params.userId || req.user?.id || req.headers['user-id'] || 'test-user-id';
     const { countryId } = req.query;
     const buildings = await buildingService.getUserBuildings(userId, countryId);
 
     res.json({ buildings });
   } catch (error) {
+    console.error('Erro ao obter edifícios do usuário:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -1,7 +1,10 @@
-import Wallet from '../models/Wallet.js';
-import Transaction from '../models/Transaction.js';
-import mongoose from 'mongoose';
+import walletRepository from '../repositories/walletRepository.js';
+import transactionRepository from '../repositories/transactionRepository.js';
+import { checkConnection } from '../config/supabase.js';
 import { emitBalanceUpdate } from '../socket/socketHandler.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('WalletService');
 
 /**
  * ✅ Criar ou obter carteira do usuário
@@ -9,55 +12,56 @@ import { emitBalanceUpdate } from '../socket/socketHandler.js';
  */
 export const getOrCreateWallet = async (userId) => {
   try {
-    // ✅ Verificar se MongoDB está conectado
-    if (mongoose.connection.readyState !== 1) {
-      console.warn('⚠️  MongoDB não está conectado. Usando saldo fictício de 100.000 VAL.');
-      // Retornar objeto de carteira fictícia para modo offline
+    if (!checkConnection()) {
+      logger.warn('⚠️  Supabase não está conectado. Usando saldo fictício de 100.000 VAL.');
       return {
+        user_id: String(userId),
         userId: String(userId),
         balance: 100000,
+        total_earned: 100000,
         totalEarned: 100000,
+        total_spent: 0,
         totalSpent: 0,
-        _isOffline: true // Flag para indicar que é saldo fictício
+        _isOffline: true
       };
     }
 
-    // Converter userId para string para garantir compatibilidade
     const userIdStr = String(userId);
+    let wallet = await walletRepository.findOrCreate(userIdStr);
     
-    let wallet = await Wallet.findOne({ userId: userIdStr });
-    
-    if (!wallet) {
+    // Garantir saldo mínimo de 100.000 VAL
+    const balance = parseFloat(wallet.balance || 0);
+    if (balance === 0 || balance < 1000) {
       const initialBalance = parseFloat(process.env.INITIAL_BALANCE || 100000);
-      wallet = new Wallet({
-        userId: userIdStr,
+      const amountToAdd = initialBalance - balance;
+      
+      wallet = await walletRepository.update(wallet.id, {
         balance: initialBalance,
-        totalEarned: initialBalance,
-        totalSpent: 0
+        total_earned: parseFloat(wallet.total_earned || 0) + amountToAdd
       });
-      await wallet.save();
-    } else if (wallet.balance === 0 || wallet.balance < 1000) {
-      // Se o saldo estiver muito baixo ou zerado, adicionar saldo inicial
-      const initialBalance = parseFloat(process.env.INITIAL_BALANCE || 100000);
-      const amountToAdd = initialBalance - wallet.balance;
-      wallet.balance = initialBalance;
-      wallet.totalEarned += amountToAdd;
-      await wallet.save();
     }
     
-    return wallet;
-  } catch (error) {
-    // ✅ FALLBACK: Retornar saldo fictício em vez de quebrar
-    console.error('⚠️  Erro ao criar/obter carteira (modo offline):', error.message || error);
-    console.warn('💰 Usando saldo fictício de 100.000 VAL para teste.');
-    
-    // Retornar objeto de carteira fictícia
+    // Converter para formato esperado pelo código existente
     return {
+      ...wallet,
+      userId: wallet.user_id || wallet.userId,
+      balance: parseFloat(wallet.balance || 0),
+      totalEarned: parseFloat(wallet.total_earned || wallet.totalEarned || 0),
+      totalSpent: parseFloat(wallet.total_spent || wallet.totalSpent || 0)
+    };
+  } catch (error) {
+    logger.error('⚠️  Erro ao criar/obter carteira (modo offline):', error.message || error);
+    logger.warn('💰 Usando saldo fictício de 100.000 VAL para teste.');
+    
+    return {
+      user_id: String(userId),
       userId: String(userId),
       balance: 100000,
+      total_earned: 100000,
       totalEarned: 100000,
+      total_spent: 0,
       totalSpent: 0,
-      _isOffline: true // Flag para indicar que é saldo fictício
+      _isOffline: true
     };
   }
 };
@@ -74,70 +78,121 @@ export const getWalletBalance = async (userId) => {
  * Adicionar saldo à carteira
  */
 export const addBalance = async (userId, amount, description, metadata = {}) => {
+  if (!checkConnection()) {
+    logger.warn('Supabase não conectado. Operação não será persistida.');
+    return await getOrCreateWallet(userId);
+  }
+
   const wallet = await getOrCreateWallet(userId);
-  const balanceBefore = wallet.balance;
+  const balanceBefore = parseFloat(wallet.balance || 0);
+  const newBalance = balanceBefore + parseFloat(amount);
   
-  wallet.balance += amount;
-  wallet.totalEarned += amount;
-  await wallet.save();
+  // Atualizar carteira
+  const updatedWallet = await walletRepository.updateBalance(userId, amount);
   
   // Registrar transação
-  await Transaction.create({
-    userId,
-    type: 'dividend',
-    amount,
-    balanceBefore,
-    balanceAfter: wallet.balance,
-    description,
-    metadata
-  });
+  try {
+    await transactionRepository.create({
+      wallet_id: updatedWallet.id,
+      user_id: userId,
+      type: 'dividend',
+      amount: parseFloat(amount),
+      description,
+      metadata: {
+        ...metadata,
+        balanceBefore,
+        balanceAfter: newBalance
+      }
+    });
+  } catch (error) {
+    logger.warn('Erro ao registrar transação:', error);
+  }
   
   // Emitir atualização via Socket.io
-  emitBalanceUpdate(userId, wallet.balance);
+  emitBalanceUpdate(userId, newBalance);
   
-  return wallet;
+  return {
+    ...updatedWallet,
+    balance: newBalance,
+    totalEarned: parseFloat(updatedWallet.total_earned || 0)
+  };
 };
 
 /**
  * Subtrair saldo da carteira
  */
 export const subtractBalance = async (userId, amount, description, metadata = {}) => {
+  if (!checkConnection()) {
+    logger.warn('Supabase não conectado. Operação não será persistida.');
+    throw new Error('Banco de dados não disponível');
+  }
+
   const wallet = await getOrCreateWallet(userId);
+  const balance = parseFloat(wallet.balance || 0);
+  const amountToSubtract = parseFloat(amount);
   
-  if (wallet.balance < amount) {
+  if (balance < amountToSubtract) {
     throw new Error('Saldo insuficiente');
   }
   
-  const balanceBefore = wallet.balance;
-  wallet.balance -= amount;
-  wallet.totalSpent += amount;
-  await wallet.save();
+  const balanceBefore = balance;
+  const newBalance = balance - amountToSubtract;
+  
+  // Atualizar carteira
+  const updatedWallet = await walletRepository.updateBalance(userId, -amountToSubtract);
   
   // Registrar transação
-  await Transaction.create({
-    userId,
-    type: 'purchase',
-    amount: -amount,
-    balanceBefore,
-    balanceAfter: wallet.balance,
-    description,
-    metadata
-  });
+  try {
+    await transactionRepository.create({
+      wallet_id: updatedWallet.id,
+      user_id: userId,
+      type: 'purchase',
+      amount: -amountToSubtract,
+      description,
+      metadata: {
+        ...metadata,
+        balanceBefore,
+        balanceAfter: newBalance
+      }
+    });
+  } catch (error) {
+    logger.warn('Erro ao registrar transação:', error);
+  }
   
   // Emitir atualização via Socket.io
-  emitBalanceUpdate(userId, wallet.balance);
+  emitBalanceUpdate(userId, newBalance);
   
-  return wallet;
+  return {
+    ...updatedWallet,
+    balance: newBalance,
+    totalSpent: parseFloat(updatedWallet.total_spent || 0)
+  };
 };
 
 /**
  * Obter histórico de transações
  */
 export const getTransactionHistory = async (userId, limit = 50, skip = 0) => {
-  return await Transaction.find({ userId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .skip(skip)
-    .populate('relatedCountryOwnership');
+  if (!checkConnection()) {
+    return [];
+  }
+
+  try {
+    const wallet = await walletRepository.findByUserId(userId);
+    if (!wallet) {
+      return [];
+    }
+
+    const transactions = await transactionRepository.findByWalletId(wallet.id, {
+      orderBy: { column: 'created_at', ascending: false },
+      limit: limit + skip
+    });
+
+    // Aplicar skip manualmente (Supabase não tem skip direto)
+    return transactions.slice(skip, skip + limit);
+  } catch (error) {
+    logger.error('Erro ao obter histórico de transações:', error);
+    return [];
+  }
 };
 

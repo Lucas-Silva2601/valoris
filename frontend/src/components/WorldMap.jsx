@@ -313,8 +313,8 @@ export default function WorldMap({
           <UnitMarkers units={units} unitPositions={unitPositions} />
         )}
 
-        {/* Marcadores de edifícios */}
-        {selectedCountry && buildings.length > 0 && (
+        {/* ✅ Marcadores de edifícios - Mostrar TODOS os edifícios, não apenas do país selecionado */}
+        {buildings.length > 0 && (
           <BuildingMarkers countryId={selectedCountry} buildings={buildings} />
         )}
 

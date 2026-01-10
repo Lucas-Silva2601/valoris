@@ -27,10 +27,13 @@ router.get('/cost', optionalAuth, buildingController.getBuildingCost);
 // Obter edifícios de um país (FASE DE TESTE: sem autenticação obrigatória)
 router.get('/country/:countryId', optionalAuth, buildingController.getBuildingsByCountry);
 
+// ✅ Obter edifícios do usuário (FASE DE TESTE: sem autenticação obrigatória)
+router.get('/user/:userId', optionalAuth, buildingController.getMyBuildings);
+
 // Outras rotas requerem autenticação
 router.use(authenticate);
 
-// Obter meus edifícios
+// Obter meus edifícios (com autenticação)
 router.get('/my-buildings', buildingController.getMyBuildings);
 
 // Melhorar edifício

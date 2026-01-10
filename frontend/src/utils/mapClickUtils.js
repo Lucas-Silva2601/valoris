@@ -11,6 +11,7 @@ import { getCountryId, getCountryName } from './countryUtils';
  */
 export const identifyCountryFromMapClick = (latlng, countriesData) => {
   if (!latlng || !countriesData || !countriesData.features) {
+    console.warn('⚠️ Dados insuficientes para identificar país:', { latlng, hasFeatures: !!countriesData?.features });
     return {
       countryId: 'UNK',
       countryName: 'Local Desconhecido',
@@ -19,63 +20,98 @@ export const identifyCountryFromMapClick = (latlng, countriesData) => {
   }
 
   const point = turf.point([latlng.lng, latlng.lat]);
+  let foundFeature = null;
+  let foundPolygon = null;
 
   // Procurar país que contém o ponto
   for (const feature of countriesData.features) {
     if (!feature.geometry) continue;
 
     let polygon = null;
+    let pointInPolygon = false;
 
-    if (feature.geometry.type === 'Polygon') {
-      polygon = turf.polygon(feature.geometry.coordinates);
-    } else if (feature.geometry.type === 'MultiPolygon') {
-      // Para MultiPolygon, verificar cada polígono
-      for (const coords of feature.geometry.coordinates) {
-        polygon = turf.polygon(coords);
-        if (turf.booleanPointInPolygon(point, polygon)) {
-          break;
+    try {
+      if (feature.geometry.type === 'Polygon') {
+        polygon = turf.polygon(feature.geometry.coordinates);
+        pointInPolygon = turf.booleanPointInPolygon(point, polygon);
+      } else if (feature.geometry.type === 'MultiPolygon') {
+        // Para MultiPolygon, verificar cada polígono
+        for (const coords of feature.geometry.coordinates) {
+          try {
+            polygon = turf.polygon(coords);
+            if (turf.booleanPointInPolygon(point, polygon)) {
+              pointInPolygon = true;
+              break;
+            }
+          } catch (err) {
+            console.warn('Erro ao processar polígono MultiPolygon:', err);
+            continue;
+          }
+        }
+      }
+
+      if (pointInPolygon && polygon) {
+        foundFeature = feature;
+        foundPolygon = polygon;
+        break; // Encontrou o país, parar busca
+      }
+    } catch (error) {
+      console.warn('Erro ao verificar polígono:', error);
+      continue;
+    }
+  }
+
+  // Se encontrou um país
+  if (foundFeature) {
+    // ✅ Extrair informações do país usando as funções utilitárias
+    let countryId = getCountryId(foundFeature);
+    const countryName = getCountryName(foundFeature);
+
+    // ✅ MELHORIA: Se getCountryId retornar null, tentar extrair diretamente das propriedades
+    if (!countryId || countryId === 'UNK' || countryId.trim().length === 0) {
+      const props = foundFeature.properties || {};
+      // Tentar todas as possíveis propriedades de código ISO
+      countryId = props.ISO_A3 || props.ADM0_A3 || props.ISO3 || props.ISO_A2 || props.GU_A3 || null;
+      
+      if (countryId) {
+        countryId = countryId.toString().trim().toUpperCase();
+        // Se for código de 2 letras, tentar expandir
+        if (countryId.length === 2) {
+          // Manter como está, mas garantir que seja válido
+          countryId = countryId + 'X'; // Adicionar X para padronizar
         }
       }
     }
 
-    if (polygon && turf.booleanPointInPolygon(point, polygon)) {
-      // ✅ Extrair informações do país usando as funções utilitárias
-      let countryId = getCountryId(feature);
-      const countryName = getCountryName(feature);
+    // ✅ Log detalhado para debug
+    console.log('🌍 País identificado:', {
+      countryId,
+      countryName,
+      coordenadas: { lat: latlng.lat, lng: latlng.lng },
+      properties: foundFeature.properties,
+      iso_a3: foundFeature.properties?.ISO_A3,
+      adm0_a3: foundFeature.properties?.ADM0_A3,
+      iso3: foundFeature.properties?.ISO3,
+      gu_a3: foundFeature.properties?.GU_A3
+    });
 
-      // ✅ MELHORIA: Se getCountryId retornar null, tentar extrair diretamente das propriedades
-      if (!countryId || countryId === 'UNK' || countryId.trim().length === 0) {
-        const props = feature.properties || {};
-        // Tentar todas as possíveis propriedades de código ISO
-        countryId = props.ISO_A3 || props.ADM0_A3 || props.ISO3 || props.ISO_A2 || null;
-        
-        if (countryId) {
-          countryId = countryId.toString().trim().toUpperCase();
-        }
-      }
-
-      // ✅ Log detalhado para debug (apenas se encontrar país)
-      if (countryId && countryId !== 'UNK') {
-        console.log('🌍 País identificado:', {
-          countryId,
-          countryName,
-          properties: feature.properties,
-          iso_a3: feature.properties?.ISO_A3,
-          adm0_a3: feature.properties?.ADM0_A3,
-          iso3: feature.properties?.ISO3
-        });
-      }
-
-      // ✅ Aceitar qualquer ID válido (não apenas se não for UNK)
-      if (countryId && countryId.trim().length > 0 && countryId !== 'UNK') {
-        return {
-          countryId: countryId.trim().toUpperCase(), // Garantir maiúsculas
-          countryName,
-          valid: true,
-          feature
-        };
-      }
+    // ✅ Aceitar qualquer ID válido (não apenas se não for UNK)
+    if (countryId && countryId.trim().length > 0 && countryId !== 'UNK' && countryId !== 'XXX') {
+      return {
+        countryId: countryId.trim().toUpperCase(), // Garantir maiúsculas
+        countryName: countryName || 'País Desconhecido',
+        valid: true,
+        feature: foundFeature
+      };
+    } else {
+      console.warn('⚠️ País encontrado mas ID inválido:', {
+        countryId,
+        countryName,
+        properties: foundFeature.properties
+      });
     }
+  } else {
+    console.warn('⚠️ Nenhum país encontrado para coordenadas:', { lat: latlng.lat, lng: latlng.lng });
   }
 
   // Se não encontrou país, retornar inválido

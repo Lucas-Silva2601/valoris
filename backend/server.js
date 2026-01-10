@@ -3,7 +3,8 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import connectDB from './config/database.js';
+// Usar Supabase em vez de MongoDB
+import connectDB from './config/supabase.js';
 import { startDividendJob } from './jobs/dividendJob.js';
 import { startMovementAndCombatJobs } from './jobs/unitMovementJob.js';
 import { startEconomicHealthJob } from './jobs/economicHealthJob.js';
@@ -14,9 +15,31 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { generalLimiter, authLimiter } from './middleware/rateLimiter.js';
 import { auditMiddleware } from './middleware/audit.js';
 import { createLogger } from './utils/logger.js';
+import countriesRoutes from './routes/countries.js';
+import walletRoutes from './routes/wallet.js';
+import ownershipRoutes from './routes/ownership.js';
+import dividendsRoutes from './routes/dividends.js';
+import treasuryRoutes from './routes/treasury.js';
+import economicRoutes from './routes/economic.js';
+import militaryRoutes from './routes/military.js';
+import combatRoutes from './routes/combat.js';
+import defenseRoutes from './routes/defense.js';
+import authRoutes from './routes/auth.js';
+import profileRoutes from './routes/profile.js';
+import missionRoutes from './routes/missions.js';
+import analyticsRoutes from './routes/analytics.js';
+import monitoringRoutes from './routes/monitoring.js';
+import marketRoutes from './routes/market.js';
+import buildingsRoutes from './routes/buildings.js';
+import npcsRoutes from './routes/npcs.js';
+import adminRoutes from './routes/admin.js';
+import { setupSocketHandlers } from './socket/socketHandler.js';
 
 // Carregar variáveis de ambiente
 dotenv.config();
+
+// Criar instância do logger
+const logger = createLogger('Server');
 
 const app = express();
 const httpServer = createServer(app);
@@ -70,11 +93,10 @@ app.use(generalLimiter);
 app.use(auditMiddleware);
 
 // ✅ Conectar ao banco de dados (NÃO TRAVA O SERVIDOR SE FALHAR)
+import { checkConnection } from './config/supabase.js';
+
 connectDB().then(async () => {
   // Iniciar jobs agendados apenas se banco estiver conectado
-  try {
-    const { checkConnection } = await import('./config/database.js');
-  
   if (checkConnection()) {
     startDividendJob();
     startMovementAndCombatJobs();
@@ -84,36 +106,13 @@ connectDB().then(async () => {
     startNPCMovementJob();
     logger.info('✅ Todos os jobs agendados iniciados');
   } else {
-    logger.warn('⚠️  Jobs não iniciados - MongoDB não está conectado (Modo Offline)');
-    }
-  } catch (error) {
-    logger.warn('⚠️  Erro ao verificar conexão. Jobs não iniciados.');
+    logger.warn('⚠️  Jobs não iniciados - Supabase não está conectado (Modo Offline)');
   }
 }).catch((error) => {
   // ✅ Servidor continua rodando mesmo se conexão falhar
-  logger.warn('⚠️  Servidor iniciado em Modo Offline. MongoDB não disponível.');
+  logger.warn('⚠️  Servidor iniciado em Modo Offline. Supabase não disponível.');
   logger.warn('💡 O sistema tentará reconectar automaticamente.');
 });
-
-// Importar rotas
-import countriesRoutes from './routes/countries.js';
-import walletRoutes from './routes/wallet.js';
-import ownershipRoutes from './routes/ownership.js';
-import dividendsRoutes from './routes/dividends.js';
-import treasuryRoutes from './routes/treasury.js';
-import economicRoutes from './routes/economic.js';
-import militaryRoutes from './routes/military.js';
-import combatRoutes from './routes/combat.js';
-import defenseRoutes from './routes/defense.js';
-import authRoutes from './routes/auth.js';
-import profileRoutes from './routes/profile.js';
-import missionRoutes from './routes/missions.js';
-import analyticsRoutes from './routes/analytics.js';
-import monitoringRoutes from './routes/monitoring.js';
-import marketRoutes from './routes/market.js';
-import buildingsRoutes from './routes/buildings.js';
-import npcsRoutes from './routes/npcs.js';
-import adminRoutes from './routes/admin.js';
 
 // Rotas básicas
 app.get('/', (req, res) => {
@@ -154,20 +153,8 @@ app.use('/api/admin', adminRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-// Carregar middlewares de segurança em produção (após todas as rotas)
-if (process.env.NODE_ENV === 'production') {
-  import('./middleware/security.js').then((securityModule) => {
-    // Reaplicar middlewares de segurança no início da cadeia
-    // (Nota: em produção real, esses devem ser aplicados antes das rotas)
-    logger.info('✅ Middlewares de segurança carregados');
-  }).catch((error) => {
-    logger.warn('⚠️  Erro ao carregar middlewares de segurança:', error.message);
-  });
-}
-
 // Configurar handlers do Socket.io
-import { setupSocketHandlers } from './socket/socketHandler.js';
-setupSocketHandlers();
+setupSocketHandlers(io);
 
 // ✅ Iniciar servidor na porta 3001
 const PORT = process.env.PORT || 3001;

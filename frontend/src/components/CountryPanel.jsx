@@ -263,14 +263,32 @@ export default function CountryPanel({ country, onClose }) {
             </button>
             <button
               onClick={() => {
-                if (!country || !isValidCountryId(country.id)) {
-                  alert('Por favor, selecione um país válido no mapa antes de construir.');
+                // ✅ Validação mais flexível - aceitar país se tiver nome ou ID válido
+                if (!country) {
+                  alert('Por favor, selecione um país no mapa antes de construir.');
+                  return;
+                }
+                
+                // Verificar se tem pelo menos nome ou ID válido
+                const hasValidId = country.id && country.id !== 'UNK' && country.id !== 'XXX';
+                const hasValidName = country.name && country.name !== 'País Desconhecido' && country.name !== 'Local Desconhecido';
+                
+                if (!hasValidId && !hasValidName) {
+                  alert('⚠️ País não identificado corretamente.\n\nPor favor, clique diretamente em um país no mapa para identificá-lo.');
                   console.error('País inválido ao tentar construir:', country);
                   return;
                 }
+                
+                console.log('🏗️ Abrindo modal de construção:', {
+                  countryId: country.id,
+                  countryName: country.name,
+                  hasValidId,
+                  hasValidName
+                });
+                
                 setShowBuildingModal(true);
               }}
-              disabled={!country || !isValidCountryId(country.id)}
+              disabled={!country}
               className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors"
             >
               🏗️ Construir Edifício
@@ -301,13 +319,14 @@ export default function CountryPanel({ country, onClose }) {
         />
       )}
 
-      {showBuildingModal && country && isValidCountryId(country.id) && (
+      {showBuildingModal && country && (
         <BuildingModal
           isOpen={showBuildingModal}
           onClose={() => setShowBuildingModal(false)}
-          countryId={country.id}
+          countryId={country.id || 'UNK'}
           countryName={country.name || 'País Desconhecido'}
-          position={null} // Será definido quando o usuário clicar no mapa
+          position={null} // Será calculado automaticamente como centroide se não fornecido
+          countryGeometry={country.geometry} // ✅ Passar geometria para calcular centroide
           onBuild={(building) => {
             handleInvestmentSuccess(); // Recarregar dados
             setShowBuildingModal(false);

@@ -50,14 +50,25 @@ export default function GamePage() {
     }
   }, [backendAvailable]);
 
-  // Carregar edifícios quando um país é selecionado
+  // ✅ Carregar edifícios quando backend fica disponível e periodicamente
   useEffect(() => {
-    if (selectedCountry && backendAvailable) {
+    if (backendAvailable) {
       loadBuildings();
     } else {
       setBuildings([]);
     }
-  }, [selectedCountry, backendAvailable]);
+  }, [backendAvailable]);
+  
+  // ✅ Recarregar edifícios periodicamente para manter atualizado (apenas se backend estiver disponível)
+  useEffect(() => {
+    if (!backendAvailable) return;
+    
+    const interval = setInterval(() => {
+      loadBuildings();
+    }, 10000); // Recarregar a cada 10 segundos
+    
+    return () => clearInterval(interval);
+  }, [backendAvailable]);
 
   // Recarregar NPCs periodicamente para ver movimento (apenas se backend estiver disponível)
   useEffect(() => {
@@ -76,16 +87,58 @@ export default function GamePage() {
 
     const handleBuildingCreated = (data) => {
       if (data.building) {
-        // Adicionar edifício à lista imediatamente
+        // ✅ Adicionar edifício à lista imediatamente
         setBuildings(prev => {
-          // Evitar duplicatas
-          const exists = prev.some(b => b.buildingId === data.building.buildingId);
-          if (exists) return prev;
-          return [...prev, data.building];
+          // ✅ Evitar duplicatas - verificar por buildingId, building_id ou id
+          const buildingId = data.building.buildingId || data.building.building_id || data.building.id;
+          const exists = prev.some(b => {
+            const bId = b.buildingId || b.building_id || b.id;
+            return bId === buildingId;
+          });
+          
+          if (exists) {
+            console.log('🏗️ Edifício já existe na lista, atualizando...');
+            // Atualizar edifício existente
+            return prev.map(b => {
+              const bId = b.buildingId || b.building_id || b.id;
+              if (bId === buildingId) {
+                return { ...b, ...data.building };
+              }
+              return b;
+            });
+          }
+          
+          // ✅ Validar posição antes de adicionar
+          const position = data.building.position || { 
+            lat: data.building.position_lat, 
+            lng: data.building.position_lng 
+          };
+          
+          if (!position || !position.lat || !position.lng || 
+              isNaN(position.lat) || isNaN(position.lng)) {
+            console.warn('⚠️ Edifício criado sem posição válida, recarregando lista...');
+            // Recarregar lista completa em vez de adicionar inválido
+            setTimeout(() => loadBuildings(), 500);
+            return prev;
+          }
+          
+          console.log('✅ Adicionando novo edifício ao mapa:', {
+            id: buildingId,
+            type: data.building.type,
+            position: position,
+            country: data.building.countryName || data.building.country_name
+          });
+          
+          return [...prev, { ...data.building, position }];
         });
         
         console.log('🏗️ Novo edifício criado via Socket.io:', data.building);
-        showSuccess(`Edifício ${data.building.type} construído em ${data.building.countryName}!`);
+        showSuccess(`✅ Edifício ${data.building.type || 'construído'} construído em ${data.building.countryName || 'país selecionado'}!`);
+        
+        // ✅ Recarregar lista após um pequeno delay para garantir que está sincronizado
+        setTimeout(() => {
+          loadBuildings();
+        }, 1000);
       }
     };
 
@@ -130,16 +183,59 @@ export default function GamePage() {
   };
 
   const loadBuildings = async () => {
-    if (!selectedCountry) return;
+    // ✅ IMPORTANTE: Sempre carregar TODOS os edifícios do usuário para mostrar no mapa
+    // Não apenas do país selecionado, pois o mapa mostra todos os edifícios
     try {
-      const response = await fetch(`${API_BASE_URL}/buildings/country/${selectedCountry}`);
+      const userId = localStorage.getItem('userId') || 'test-user-id';
+      
+      // ✅ Sempre carregar todos os edifícios do usuário
+      const response = await fetch(`${API_BASE_URL}/buildings/user/${userId}`, {
+        headers: {
+          'user-id': userId
+        }
+      });
       
       if (response.ok) {
         const data = await response.json();
-        setBuildings(data.buildings || []);
+        const buildingsList = data.buildings || data || [];
+        
+        // ✅ Validar e filtrar edifícios com posição válida
+        const validBuildings = buildingsList.filter(building => {
+          const hasPosition = building.position || (building.position_lat && building.position_lng);
+          if (!hasPosition) {
+            console.warn('Edifício sem posição válida:', building);
+            return false;
+          }
+          
+          const lat = building.position?.lat || building.position_lat;
+          const lng = building.position?.lng || building.position_lng;
+          
+          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            console.warn('Edifício com posição inválida:', building);
+            return false;
+          }
+          
+          return true;
+        });
+        
+        setBuildings(validBuildings);
+        console.log(`✅ Carregados ${validBuildings.length} edifícios válidos (de ${buildingsList.length} total)`);
+        
+        if (validBuildings.length > 0) {
+          console.log('🏗️ Edifícios no mapa:', validBuildings.map(b => ({
+            id: b.buildingId || b.building_id || b.id,
+            type: b.type,
+            position: b.position || { lat: b.position_lat, lng: b.position_lng },
+            country: b.countryName || b.country_name
+          })));
+        }
+      } else {
+        console.warn('Erro ao carregar edifícios:', response.status);
+        setBuildings([]);
       }
     } catch (error) {
       console.error('Erro ao carregar edifícios:', error);
+      setBuildings([]);
     }
   };
 
@@ -236,25 +332,64 @@ export default function GamePage() {
   }, []);
 
   const handleCountryClick = (feature, countryId) => {
-    // Usar função utilitária para obter ID do país (flexível - aceita qualquer país)
-    const validCountryId = getCountryId(feature) || countryId || 'UNK';
-    const countryName = getCountryName(feature);
-
-    // Aceitar qualquer país - não bloquear se não tiver código ISO padrão
-    if (!isValidCountryId(validCountryId)) {
-      console.warn('País sem ID padrão, usando ID gerado:', {
-        countryId: validCountryId,
-        countryName,
-        properties: feature.properties
-      });
+    // ✅ Garantir que sempre obtenhamos um ID válido do país
+    const extractedCountryId = getCountryId(feature);
+    const extractedCountryName = getCountryName(feature);
+    
+    // ✅ Usar ID extraído ou o passado como parâmetro
+    let validCountryId = extractedCountryId || countryId;
+    
+    // ✅ Se ainda não tiver ID válido, gerar um baseado no nome (NUNCA deixar como 'UNK')
+    if (!validCountryId || validCountryId === 'UNK' || validCountryId === 'XXX') {
+      if (extractedCountryName && extractedCountryName !== 'País Desconhecido') {
+        // Gerar ID a partir do nome se não tiver código ISO
+        const normalized = extractedCountryName
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '');
+        
+        if (normalized.length >= 3) {
+          validCountryId = normalized.substring(0, 3);
+        } else if (normalized.length > 0) {
+          validCountryId = (normalized + 'XXX').substring(0, 3);
+        } else {
+          // Se ainda não tiver, usar hash do nome completo
+          let hash = 0;
+          for (let i = 0; i < extractedCountryName.length; i++) {
+            hash = ((hash << 5) - hash) + extractedCountryName.charCodeAt(i);
+            hash = hash & hash;
+          }
+          validCountryId = Math.abs(hash).toString(36).substring(0, 3).toUpperCase().padEnd(3, 'X');
+        }
+      } else {
+        // Último fallback: usar hash das propriedades do feature
+        const propsStr = JSON.stringify(feature?.properties || {}).substring(0, 50);
+        let hash = 0;
+        for (let i = 0; i < propsStr.length; i++) {
+          hash = ((hash << 5) - hash) + propsStr.charCodeAt(i);
+          hash = hash & hash;
+        }
+        validCountryId = Math.abs(hash).toString(36).substring(0, 3).toUpperCase().padEnd(3, 'X');
+      }
     }
+
+    // ✅ Log para debug
+    console.log('🌍 País clicado:', {
+      extractedId: extractedCountryId,
+      passedId: countryId,
+      finalId: validCountryId,
+      countryName: extractedCountryName,
+      properties: feature?.properties,
+      hasValidId: validCountryId && validCountryId !== 'UNK' && validCountryId !== 'XXX'
+    });
 
     setSelectedCountry(validCountryId);
     setSelectedCountryData({
       id: validCountryId,
-      name: countryName,
-      properties: feature.properties,
-      geometry: feature.geometry
+      name: extractedCountryName,
+      properties: feature?.properties || {},
+      geometry: feature?.geometry || null
     });
   };
 
@@ -343,7 +478,21 @@ export default function GamePage() {
             npcs={npcs}
             socket={socket}
             onMapClick={(e) => {
-              // ✅ Identificar país ANTES de abrir o modal usando GeoJSON e Turf.js
+              // ✅ Verificar se já há um modal de construção aberto (do CountryPanel)
+              // Se sim, apenas atualizar a posição sem abrir novo modal
+              if (buildingModalOpen && selectedCountry && selectedCountryData) {
+                // Modal já está aberto, apenas atualizar a posição
+                const clickedPosition = {
+                  lat: e.latlng.lat,
+                  lng: e.latlng.lng
+                };
+                
+                setBuildingPosition(clickedPosition);
+                console.log('📍 Posição atualizada no modal:', clickedPosition);
+                return; // Não abrir novo modal
+              }
+              
+              // ✅ Se não há modal aberto, identificar país e abrir novo modal
               const clickedPosition = {
                 lat: e.latlng.lat,
                 lng: e.latlng.lng
@@ -362,13 +511,18 @@ export default function GamePage() {
                 coordenadas: clickedPosition,
                 país: countryInfo.countryName,
                 id: countryInfo.countryId,
-                válido: countryInfo.valid
+                válido: countryInfo.valid,
+                feature: countryInfo.feature
               });
               
               // ✅ VALIDAÇÃO: Só abrir modal se país foi identificado
-              if (!countryInfo.valid || countryInfo.countryId === 'UNK') {
-                console.warn('⚠️  País não identificado no clique:', clickedPosition);
-                alert('⚠️ Não foi possível identificar o país neste local.\n\nTente clicar diretamente sobre um país no mapa.');
+              if (!countryInfo.valid || !countryInfo.countryId || countryInfo.countryId === 'UNK' || countryInfo.countryId === 'XXX') {
+                console.warn('⚠️  País não identificado no clique:', {
+                  coordenadas: clickedPosition,
+                  countryInfo,
+                  hasFeatures: countriesData?.features?.length
+                });
+                alert('⚠️ Não foi possível identificar o país neste local.\n\n💡 Dica: Clique diretamente sobre a área colorida de um país no mapa.\n\nO sistema precisa identificar em qual país você está construindo.');
                 return; // Não abrir modal se país não foi identificado
               }
               
@@ -377,9 +531,14 @@ export default function GamePage() {
               setSelectedCountry(countryInfo.countryId);
               setSelectedCountryData({
                 id: countryInfo.countryId,
-                name: countryInfo.countryName,
+                name: countryInfo.countryName || 'País Selecionado',
                 properties: countryInfo.feature?.properties || {},
                 geometry: countryInfo.feature?.geometry || null
+              });
+              
+              console.log('✅ País identificado com sucesso:', {
+                countryId: countryInfo.countryId,
+                countryName: countryInfo.countryName
               });
               
               // Só abrir modal se país foi identificado corretamente
@@ -419,7 +578,7 @@ export default function GamePage() {
         )}
 
         {/* Modal de Construção */}
-        {buildingModalOpen && buildingPosition && (
+        {buildingModalOpen && (
           <BuildingModal
             isOpen={buildingModalOpen}
             onClose={() => {
@@ -428,19 +587,29 @@ export default function GamePage() {
             }}
             countryId={selectedCountry || 'UNK'}
             countryName={selectedCountryData?.name || 'Local Selecionado'}
-            position={buildingPosition}
+            position={buildingPosition} // Pode ser null, será calculado automaticamente se necessário
+            countryGeometry={selectedCountryData?.geometry} // ✅ Passar geometria para calcular centroide
             onBuild={(building) => {
-              // Recarregar edifícios e NPCs após construir
-              if (selectedCountry) {
+              // ✅ Recarregar TODOS os edifícios após construir (não apenas do país selecionado)
+              console.log('🏗️ Edifício construído, recarregando lista...', building);
+              
+              // Recarregar imediatamente
+              loadBuildings();
+              
+              // Recarregar novamente após um delay para garantir que apareceu
+              setTimeout(() => {
                 loadBuildings();
-              }
+                console.log('🔄 Recarregando edifícios após construção...');
+              }, 1500);
+              
               // Recarregar todos os NPCs para ver os construtores
               setTimeout(() => {
                 loadAllNPCs();
               }, 1000);
+              
               setBuildingModalOpen(false);
               setBuildingPosition(null);
-              showSuccess('Edifício em construção! 10 NPCs construtores foram enviados.');
+              showSuccess(`✅ Edifício construído! O dinheiro foi deduzido da sua carteira. 10 NPCs construtores foram enviados.`);
             }}
           />
         )}

@@ -1,6 +1,7 @@
-import Building from '../models/Building.js';
-import Wallet from '../models/Wallet.js';
+import buildingRepository from '../repositories/buildingRepository.js';
+import npcRepository from '../repositories/npcRepository.js';
 import { subtractBalance } from './walletService.js';
+import { checkConnection } from '../config/supabase.js';
 import { createLogger } from '../utils/logger.js';
 import * as turf from '@turf/turf';
 import fs from 'fs';
@@ -157,6 +158,10 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
   // Calcular custo
   const cost = calculateBuildingCost(type, level);
 
+  // ✅ Garantir que o usuário existe no banco (necessário para foreign key)
+  const { ensureTestUserExists } = await import('../utils/userUtils.js');
+  const ownerUUID = await ensureTestUserExists(userId);
+
   // Garantir que o usuário tenha carteira
   const { getOrCreateWallet } = await import('./walletService.js');
   const wallet = await getOrCreateWallet(userId);
@@ -165,38 +170,124 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     throw new Error(`Saldo insuficiente. Você tem ${wallet.balance.toFixed(2)} VAL, mas precisa de ${cost} VAL`);
   }
 
-  // Verificar se já existe edifício muito próximo (evitar sobreposição)
-  // Usar consulta geográfica MongoDB
-  const nearbyBuildings = await Building.find({
-    position: {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [lng, lat]
-        },
-        $maxDistance: 100 // 100 metros de distância mínima
+  // ✅ IMPORTANTE: Verificar edifícios próximos e ESPALHAR se necessário
+  // Se já existirem edifícios no mesmo país, gerar posição ALEATÓRIA ESPALHADA
+  if (checkConnection()) {
+    const nearbyBuildings = await buildingRepository.findNearby(lng, lat, 5); // 5km de raio
+    
+    // ✅ Se houver edifícios próximos no MESMO país, gerar nova posição ALEATÓRIA ESPALHADA
+    const buildingsInSameCountry = nearbyBuildings.filter(b => 
+      (b.countryId === finalCountryId || b.country_id === finalCountryId)
+    );
+    
+    if (buildingsInSameCountry.length > 0) {
+      logger.info(`🏗️ Encontrados ${buildingsInSameCountry.length} edifícios próximos no país ${finalCountryName}. Gerando posição ESPALHADA...`);
+      
+      // ✅ Buscar feature do país no GeoJSON para gerar ponto aleatório
+      const countriesGeoJSON = loadCountriesGeoJSON();
+      let countryFeature = null;
+      
+      if (countriesGeoJSON && countriesGeoJSON.features) {
+        for (const feature of countriesGeoJSON.features) {
+          const props = feature.properties || {};
+          const featureCountryId = props.ISO_A3 || props.ADM0_A3 || props.ISO3 || props.ISO_A2;
+          if (featureCountryId === finalCountryId) {
+            countryFeature = feature;
+            break;
+          }
+        }
+      }
+      
+      // ✅ Gerar ponto aleatório ESPALHADO dentro do país (até 50 tentativas)
+      if (countryFeature && countryFeature.geometry) {
+        let newPosition = null;
+        const bbox = turf.bbox(turf.feature(countryFeature.geometry));
+        
+        for (let attempt = 0; attempt < 50; attempt++) {
+          // Gerar coordenada aleatória dentro do bounding box
+          const randomLng = bbox[0] + Math.random() * (bbox[2] - bbox[0]);
+          const randomLat = bbox[1] + Math.random() * (bbox[3] - bbox[1]);
+          
+          const point = turf.point([randomLng, randomLat]);
+          
+          // Verificar se está dentro do polígono
+          let isInside = false;
+          if (countryFeature.geometry.type === 'Polygon') {
+            const poly = turf.polygon(countryFeature.geometry.coordinates);
+            isInside = turf.booleanPointInPolygon(point, poly);
+          } else if (countryFeature.geometry.type === 'MultiPolygon') {
+            for (const coords of countryFeature.geometry.coordinates) {
+              const poly = turf.polygon(coords);
+              if (turf.booleanPointInPolygon(point, poly)) {
+                isInside = true;
+                break;
+              }
+            }
+          }
+          
+          if (isInside) {
+            // ✅ Verificar se a nova posição está longe o suficiente dos edifícios existentes
+            const tooClose = buildingsInSameCountry.some(b => {
+              const bLat = b.position?.lat || b.position_lat;
+              const bLng = b.position?.lng || b.position_lng;
+              if (!bLat || !bLng) return false;
+              
+              // Calcular distância (aproximada em km)
+              const R = 6371; // Raio da Terra em km
+              const dLat = (randomLat - bLat) * Math.PI / 180;
+              const dLng = (randomLng - bLng) * Math.PI / 180;
+              const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                        Math.cos(bLat * Math.PI / 180) * Math.cos(randomLat * Math.PI / 180) *
+                        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              const distanceKm = R * c;
+              
+              return distanceKm < 0.5; // Mínimo 500m de distância
+            });
+            
+            if (!tooClose) {
+              newPosition = { lat: randomLat, lng: randomLng };
+              logger.info(`✅ Nova posição ESPALHADA gerada: ${randomLat.toFixed(4)}, ${randomLng.toFixed(4)} (tentativa ${attempt + 1})`);
+              break;
+            }
+          }
+        }
+        
+        if (newPosition) {
+          lat = newPosition.lat;
+          lng = newPosition.lng;
+          logger.info(`🏗️ Posição ajustada para ESPALHAR construções: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+        } else {
+          logger.warn(`⚠️ Não foi possível gerar posição espalhada após 50 tentativas. Usando posição original.`);
+        }
       }
     }
-  });
-
-  if (nearbyBuildings.length > 0) {
-    throw new Error('Já existe um edifício muito próximo desta localização (distância mínima: 100m)');
+    
+    // ✅ Verificar se ainda há edifício muito próximo (100m) - se sim, erro
+    const veryNearbyBuildings = await buildingRepository.findNearby(lng, lat, 0.1); // 100 metros
+    if (veryNearbyBuildings.length > 0) {
+      throw new Error('Já existe um edifício muito próximo desta localização (distância mínima: 100m). Tente construir em outra área do país.');
+    }
   }
 
   // Criar edifício
   const buildingId = `building_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const building = new Building({
+  const buildingData = {
     buildingId,
-    ownerId: userId,
+    ownerId: ownerUUID, // ✅ Usar UUID do usuário garantido
     countryId: finalCountryId,
     countryName: finalCountryName,
     type,
     position: { lat, lng },
     level,
-    cost
-  });
+    cost,
+    name: `${type.charAt(0).toUpperCase() + type.slice(1)} Level ${level}`,
+    capacity: BUILDING_COSTS[type] / 100, // Capacidade baseada no custo
+    revenuePerHour: BUILDING_COSTS[type] / 1000, // Receita baseada no custo
+    condition: 100
+  };
 
-  await building.save();
+  const building = await buildingRepository.create(buildingData);
 
   // Subtrair saldo
   await subtractBalance(
@@ -206,13 +297,15 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     { buildingId, countryId: finalCountryId, type }
   );
 
-  logger.info(`🏗️ Edifício construído: ${building.name} (${type}) nível ${level} em ${finalCountryName} (${finalCountryId}) por usuário ${userId}`);
+  logger.info(`🏗️ Edifício construído: ${buildingData.name} (${type}) nível ${level} em ${finalCountryName} (${finalCountryId}) por usuário ${userId}`);
 
   // Criar 10 NPCs construtores que vão para o local da construção
-  const npcService = await import('./npcService.js');
   try {
-    const constructorsCreated = await npcService.createConstructionNPCs(building, 10);
-    logger.info(`👷 Criados ${constructorsCreated} NPCs construtores para ${building.name}`);
+    const npcService = await import('./npcService.js');
+    if (npcService.createConstructionNPCs) {
+      const constructorsCreated = await npcService.createConstructionNPCs(building, 10);
+      logger.info(`👷 Criados ${constructorsCreated} NPCs construtores para ${buildingData.name}`);
+    }
   } catch (error) {
     logger.error(`Erro ao criar NPCs construtores:`, error);
   }
@@ -224,44 +317,113 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
  * Obter edifícios de um país
  */
 export const getBuildingsByCountry = async (countryId) => {
-  return await Building.find({ countryId })
-    .populate('ownerId', 'username')
-    .populate('npcs', 'npcId name position status')
-    .sort({ createdAt: -1 });
+  if (!checkConnection()) {
+    return [];
+  }
+
+  try {
+    const buildings = await buildingRepository.findByCountryId(countryId);
+    return buildings.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  } catch (error) {
+    logger.error('Erro ao obter edifícios do país:', error);
+    return [];
+  }
 };
 
 /**
  * Obter edifícios de um usuário
+ * ✅ Converter userId para UUID válido e garantir que todos os edifícios tenham posição válida
  */
 export const getUserBuildings = async (userId, countryId = null) => {
-  const query = { ownerId: userId };
-  if (countryId) {
-    query.countryId = countryId;
+  if (!checkConnection()) {
+    return [];
   }
-  return await Building.find(query)
-    .populate('npcs', 'npcId name position status')
-    .sort({ createdAt: -1 });
+
+  try {
+    // ✅ Garantir que o usuário existe no banco (necessário para UUID válido)
+    const { ensureTestUserExists } = await import('../utils/userUtils.js');
+    const userUUID = await ensureTestUserExists(userId);
+    
+    // ✅ Buscar edifícios usando UUID válido
+    let buildings = await buildingRepository.findByOwnerId(userUUID || userId);
+    
+    // ✅ Filtrar edifícios sem posição válida
+    buildings = buildings.filter(building => {
+      if (!building) return false;
+      
+      // ✅ Garantir que o edifício tem posição válida
+      const position = building.position || { 
+        lat: building.position_lat, 
+        lng: building.position_lng 
+      };
+      
+      if (!position || position.lat == null || position.lng == null ||
+          isNaN(position.lat) || isNaN(position.lng) ||
+          position.lat < -90 || position.lat > 90 ||
+          position.lng < -180 || position.lng > 180) {
+        logger.warn(`⚠️ Edifício ${building.buildingId || building.building_id} sem posição válida, removendo da lista`);
+        return false;
+      }
+      
+      // ✅ Garantir que position está no formato correto
+      if (!building.position) {
+        building.position = position;
+      }
+      
+      return true;
+    });
+    
+    // ✅ Filtrar por país se fornecido
+    if (countryId) {
+      buildings = buildings.filter(b => 
+        (b.countryId && b.countryId === countryId) || 
+        (b.country_id && b.country_id === countryId)
+      );
+    }
+    
+    // ✅ Ordenar por data de criação (mais recentes primeiro)
+    buildings.sort((a, b) => {
+      const dateA = new Date(a.created_at || a.createdAt || 0);
+      const dateB = new Date(b.created_at || b.createdAt || 0);
+      return dateB - dateA;
+    });
+    
+    logger.info(`✅ ${buildings.length} edifícios válidos encontrados para usuário ${userId}`);
+    
+    return buildings;
+  } catch (error) {
+    logger.error('Erro ao obter edifícios do usuário:', error);
+    return [];
+  }
 };
 
 /**
  * Melhorar edifício
  */
 export const upgradeBuilding = async (userId, buildingId) => {
-  const building = await Building.findOne({ buildingId, ownerId: userId });
+  if (!checkConnection()) {
+    throw new Error('Banco de dados não disponível');
+  }
 
-  if (!building) {
+  const building = await buildingRepository.findByBuildingId(buildingId);
+
+  if (!building || (building.ownerId !== userId && building.owner_id !== userId)) {
     throw new Error('Edifício não encontrado ou você não é o proprietário');
   }
 
-  if (building.level >= 10) {
+  const currentLevel = building.level || 1;
+  if (currentLevel >= 10) {
     throw new Error('Edifício já está no nível máximo');
   }
 
-  const upgradeCost = calculateBuildingCost(building.type, building.level + 1) - building.cost;
+  const currentCost = building.cost || calculateBuildingCost(building.type, currentLevel);
+  const newLevelCost = calculateBuildingCost(building.type, currentLevel + 1);
+  const upgradeCost = newLevelCost - currentCost;
 
   // Verificar saldo
-  const wallet = await Wallet.findOne({ userId });
-  if (!wallet || wallet.balance < upgradeCost) {
+  const { getOrCreateWallet } = await import('./walletService.js');
+  const wallet = await getOrCreateWallet(userId);
+  if (!wallet || parseFloat(wallet.balance || 0) < upgradeCost) {
     throw new Error(`Saldo insuficiente. Necessário: ${upgradeCost} VAL`);
   }
 
@@ -269,45 +431,61 @@ export const upgradeBuilding = async (userId, buildingId) => {
   await subtractBalance(
     userId,
     upgradeCost,
-    `Melhoria de ${building.name} (nível ${building.level} → ${building.level + 1})`,
-    { buildingId, countryId: building.countryId }
+    `Melhoria de ${building.name || building.type} (nível ${currentLevel} → ${currentLevel + 1})`,
+    { buildingId, countryId: building.countryId || building.country_id }
   );
 
   // Atualizar nível
-  building.level += 1;
-  building.cost += upgradeCost;
-  await building.save();
+  const updatedBuilding = await buildingRepository.update(building.id, {
+    level: currentLevel + 1,
+    cost: newLevelCost,
+    name: `${building.type.charAt(0).toUpperCase() + building.type.slice(1)} Level ${currentLevel + 1}`
+  });
 
-  logger.info(`⬆️ Edifício melhorado: ${building.name} para nível ${building.level}`);
+  logger.info(`⬆️ Edifício melhorado: ${updatedBuilding.name} para nível ${updatedBuilding.level || currentLevel + 1}`);
 
-  return building;
+  return updatedBuilding;
 };
 
 /**
  * Demolir edifício
  */
 export const demolishBuilding = async (userId, buildingId) => {
-  const building = await Building.findOne({ buildingId, ownerId: userId });
+  if (!checkConnection()) {
+    throw new Error('Banco de dados não disponível');
+  }
 
-  if (!building) {
+  const building = await buildingRepository.findByBuildingId(buildingId);
+
+  if (!building || (building.ownerId !== userId && building.owner_id !== userId)) {
     throw new Error('Edifício não encontrado ou você não é o proprietário');
   }
 
   // Remover NPCs associados (eles encontrarão novos lugares)
-  const NPC = (await import('../models/NPC.js')).default;
-  await NPC.updateMany(
-    { $or: [{ homeBuilding: building._id }, { workBuilding: building._id }] },
-    { 
-      $unset: { 
-        homeBuilding: building.type === 'house' || building.type === 'apartment' ? 1 : 0,
-        workBuilding: building.type !== 'house' && building.type !== 'apartment' ? 1 : 0
+  try {
+    const npcs = await npcRepository.findAll();
+    for (const npc of npcs) {
+      const needsUpdate = (npc.homeBuilding === building.id || npc.workBuilding === building.id);
+      if (needsUpdate) {
+        const updateData = {};
+        if (npc.homeBuilding === building.id && (building.type === 'house' || building.type === 'apartment')) {
+          updateData.homeBuilding = null;
+        }
+        if (npc.workBuilding === building.id && building.type !== 'house' && building.type !== 'apartment') {
+          updateData.workBuilding = null;
+        }
+        if (Object.keys(updateData).length > 0) {
+          await npcRepository.updateByNpcId(npc.npcId, updateData);
+        }
       }
     }
-  );
+  } catch (error) {
+    logger.warn('Erro ao atualizar NPCs associados ao edifício:', error);
+  }
 
-  await building.deleteOne();
+  await buildingRepository.delete(building.id);
 
-  logger.info(`🗑️ Edifício demolido: ${building.name} por usuário ${userId}`);
+  logger.info(`🗑️ Edifício demolido: ${building.name || building.type} por usuário ${userId}`);
 
   return { success: true, message: 'Edifício demolido com sucesso' };
 };

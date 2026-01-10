@@ -1,8 +1,6 @@
 import Combat from '../models/Combat.js';
 import MilitaryUnit from '../models/MilitaryUnit.js';
 import CountryDefense from '../models/CountryDefense.js';
-// import { detectCountryByCoordinates } from '../utils/geography.js';
-// Nota: detectCountryByCoordinates será implementado quando necessário com dados GeoJSON
 import * as treasuryService from './treasuryService.js';
 import * as economicMetricsService from './economicMetricsService.js';
 import * as countryOwnershipService from './countryOwnershipService.js';

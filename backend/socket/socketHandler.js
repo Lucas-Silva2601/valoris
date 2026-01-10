@@ -1,11 +1,10 @@
-import { io } from '../server.js';
-import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
-
 // Salas/rooms por país
 const countryRooms = new Map();
 // Salas por usuário
 const userRooms = new Map();
+
+// Variável para armazenar a instância do io
+let ioInstance = null;
 
 /**
  * Autenticar conexão Socket.io
@@ -35,7 +34,8 @@ export const authenticateSocket = async (socket, next) => {
 /**
  * Configurar handlers de Socket.io
  */
-export const setupSocketHandlers = () => {
+export const setupSocketHandlers = (io) => {
+  ioInstance = io;
   io.use(authenticateSocket);
 
   io.on('connection', (socket) => {
@@ -136,21 +136,33 @@ const getInitialSyncData = async (userId, data = {}) => {
  * Emitir evento para um usuário específico
  */
 export const emitToUser = (userId, event, data) => {
-  io.to(`user:${userId}`).emit(event, data);
+  if (!ioInstance) {
+    console.error('Socket.io não foi inicializado');
+    return;
+  }
+  ioInstance.to(`user:${userId}`).emit(event, data);
 };
 
 /**
  * Emitir evento para um país específico
  */
 export const emitToCountry = (countryId, event, data) => {
-  io.to(`country:${countryId}`).emit(event, data);
+  if (!ioInstance) {
+    console.error('Socket.io não foi inicializado');
+    return;
+  }
+  ioInstance.to(`country:${countryId}`).emit(event, data);
 };
 
 /**
  * Broadcast global
  */
 export const broadcast = (event, data) => {
-  io.emit(event, data);
+  if (!ioInstance) {
+    console.error('Socket.io não foi inicializado');
+    return;
+  }
+  ioInstance.emit(event, data);
 };
 
 /**
@@ -225,20 +237,24 @@ export const emitOwnershipUpdate = (countryId, ownershipData) => {
  */
 export const emitMarketOrderUpdate = (countryId, order) => {
   try {
+    if (!ioInstance) {
+      console.error('Socket.io não foi inicializado');
+      return;
+    }
     // Emitir para todos interessados no país
-    io.to(`country:${countryId}`).emit('market_order_update', {
+    ioInstance.to(`country:${countryId}`).emit('market_order_update', {
       countryId,
       order
     });
 
     // Emitir para o vendedor
     if (order.sellerId) {
-      io.to(`user:${order.sellerId}`).emit('my_market_order_update', order);
+      ioInstance.to(`user:${order.sellerId}`).emit('my_market_order_update', order);
     }
 
     // Emitir para o comprador (se houver)
     if (order.buyerId) {
-      io.to(`user:${order.buyerId}`).emit('my_market_order_update', order);
+      ioInstance.to(`user:${order.buyerId}`).emit('my_market_order_update', order);
     }
   } catch (error) {
     console.error('Erro ao emitir atualização de ordem de mercado:', error);
@@ -304,5 +320,6 @@ export const emitNPCsForCountry = (countryId, npcs) => {
   });
 };
 
-export { io };
+// Exportar função para obter a instância do io (para compatibilidade)
+export const getIO = () => ioInstance;
 
