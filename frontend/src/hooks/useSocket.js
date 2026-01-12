@@ -1,106 +1,174 @@
-import { useEffect, useRef, useState } from 'react';
-import socket from '../services/socket';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { getSocket } from '../services/socket';
 
+/**
+ * ✅ Hook para usar Socket.io com conexão dinâmica
+ * Aguarda configuração do backend antes de conectar
+ */
 export const useSocket = () => {
+  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [socketId, setSocketId] = useState(null);
-  const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const listenersRef = useRef([]);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [error, setError] = useState(null);
+  const listenersRef = useRef({});
 
   useEffect(() => {
-    // Conectar
-    socket.connect();
-
-    // Eventos de conexão
-    const onConnect = () => {
-      console.log('✅ Conectado ao servidor Socket.io');
-      setIsConnected(true);
-      setSocketId(socket.id);
-      setReconnectAttempts(0);
+    let mounted = true;
+    let connectTimeout = null;
+    
+    console.log('🔌 useSocket: Inicializando...');
+    
+    // Inicializar socket de forma assíncrona
+    const initSocket = async () => {
+      try {
+        console.log('🔌 useSocket: Aguardando configuração do backend...');
+        const socketInstance = await getSocket();
+        
+        if (!mounted || !socketInstance) {
+          console.warn('⚠️  useSocket: Componente desmontado ou socket inválido');
+          return;
+        }
+        
+        console.log('✅ useSocket: Socket instanciado');
+        setSocket(socketInstance);
+        setIsInitializing(false);
+        setError(null);
+        
+        // Aguardar um momento antes de conectar (dar tempo para o backend estar pronto)
+        connectTimeout = setTimeout(() => {
+          if (mounted && socketInstance && !socketInstance.connected) {
+            console.log('🔌 useSocket: Conectando Socket.io...');
+            socketInstance.connect();
+          }
+        }, 1000);
+        
+        // Event listeners
+        const handleConnect = () => {
+          console.log('✅ useSocket: Socket CONECTADO!');
+          if (mounted) {
+            setIsConnected(true);
+            setError(null);
+          }
+        };
+        
+        const handleDisconnect = (reason) => {
+          console.log('⚠️  useSocket: Socket desconectado:', reason);
+          if (mounted) {
+            setIsConnected(false);
+          }
+        };
+        
+        const handleConnectError = (err) => {
+          console.error('❌ useSocket: Erro de conexão:', err.message);
+          if (mounted) {
+            setError(err.message);
+            setIsConnected(false);
+          }
+        };
+        
+        socketInstance.on('connect', handleConnect);
+        socketInstance.on('disconnect', handleDisconnect);
+        socketInstance.on('connect_error', handleConnectError);
+        
+        // Verificar estado inicial
+        if (socketInstance.connected) {
+          console.log('✅ useSocket: Socket já estava conectado');
+          setIsConnected(true);
+        }
+        
+        // Cleanup
+        return () => {
+          if (connectTimeout) {
+            clearTimeout(connectTimeout);
+          }
+          socketInstance.off('connect', handleConnect);
+          socketInstance.off('disconnect', handleDisconnect);
+          socketInstance.off('connect_error', handleConnectError);
+        };
+      } catch (err) {
+        console.error('❌ useSocket: Erro ao inicializar:', err);
+        if (mounted) {
+          setError(err.message);
+          setIsInitializing(false);
+        }
+      }
     };
-
-    const onDisconnect = () => {
-      console.log('❌ Desconectado do servidor Socket.io');
-      setIsConnected(false);
-      setSocketId(null);
-    };
-
-    const onReconnect = (attemptNumber) => {
-      console.log(`🔄 Reconectado (tentativa ${attemptNumber})`);
-      setReconnectAttempts(attemptNumber);
-    };
-
-    const onConnected = (data) => {
-      console.log('📡 Dados de conexão recebidos:', data);
-      setSocketId(data.socketId);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('reconnect', onReconnect);
-    socket.on('connected', onConnected);
-
-    // Limpar listeners ao desmontar
+    
+    initSocket();
+    
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('reconnect', onReconnect);
-      socket.off('connected', onConnected);
-      
-      // Remover todos os listeners registrados
-      listenersRef.current.forEach(({ event, handler }) => {
-        socket.off(event, handler);
-      });
-      
-      socket.disconnect();
+      mounted = false;
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+      }
     };
   }, []);
 
-  // Função para adicionar listener
-  const addListener = (event, handler) => {
-    socket.on(event, handler);
-    listenersRef.current.push({ event, handler });
-  };
+  // ✅ Funções helper compatíveis com useRealtimeUpdates
+  const emit = useCallback((event, data) => {
+    if (socket && socket.connected) {
+      socket.emit(event, data);
+      return true;
+    }
+    console.warn(`⚠️  Socket não conectado, evento "${event}" não enviado`);
+    return false;
+  }, [socket]);
 
-  // Função para remover listener
-  const removeListener = (event, handler) => {
-    socket.off(event, handler);
-    listenersRef.current = listenersRef.current.filter(
-      l => l.event !== event || l.handler !== handler
-    );
-  };
+  const addListener = useCallback((event, handler) => {
+    if (socket) {
+      socket.on(event, handler);
+      
+      // Armazenar referência para cleanup
+      if (!listenersRef.current[event]) {
+        listenersRef.current[event] = [];
+      }
+      listenersRef.current[event].push(handler);
+      
+      return () => {
+        socket.off(event, handler);
+        // Remover da lista
+        if (listenersRef.current[event]) {
+          listenersRef.current[event] = listenersRef.current[event].filter(h => h !== handler);
+        }
+      };
+    }
+    return () => {};
+  }, [socket]);
 
-  // Função para emitir evento
-  const emit = (event, data) => {
-    socket.emit(event, data);
-  };
+  const removeListener = useCallback((event, handler) => {
+    if (socket) {
+      socket.off(event, handler);
+      // Remover da lista
+      if (listenersRef.current[event]) {
+        listenersRef.current[event] = listenersRef.current[event].filter(h => h !== handler);
+      }
+    }
+  }, [socket]);
 
-  // Função para entrar em sala de país
-  const joinCountry = (countryId) => {
-    emit('join_country', countryId);
-  };
+  // Alias para compatibilidade
+  const on = addListener;
+  const off = removeListener;
 
-  // Função para sair de sala de país
-  const leaveCountry = (countryId) => {
-    emit('leave_country', countryId);
-  };
-
-  // Solicitar sincronização inicial
-  const requestSync = (data = {}) => {
-    emit('request_sync', data);
-  };
+  const requestSync = useCallback(() => {
+    if (socket && socket.connected) {
+      console.log('🔄 Solicitando sincronização...');
+      socket.emit('request_sync');
+      return true;
+    }
+    console.warn('⚠️  Socket não conectado, sync não solicitado');
+    return false;
+  }, [socket]);
 
   return {
-    isConnected,
-    socketId,
-    reconnectAttempts,
     socket,
+    isConnected,
+    isInitializing,
+    error,
+    emit,
     addListener,
     removeListener,
-    emit,
-    joinCountry,
-    leaveCountry,
+    on,
+    off,
     requestSync
   };
 };
-

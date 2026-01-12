@@ -1,4 +1,5 @@
 import * as buildingService from '../services/buildingService.js';
+import buildingRepository from '../repositories/buildingRepository.js';
 import * as turf from '@turf/turf';
 import fs from 'fs';
 import path from 'path';
@@ -158,7 +159,7 @@ export const getBuildingsByCountry = async (req, res) => {
   }
 };
 
-export const getMyBuildings = async (req, res) => {
+export const getUserBuildings = async (req, res) => {
   try {
     // ✅ FASE DE TESTE: Permitir userId de parâmetro ou header
     const userId = req.params.userId || req.user?.id || req.headers['user-id'] || 'test-user-id';
@@ -172,9 +173,12 @@ export const getMyBuildings = async (req, res) => {
   }
 };
 
+// ✅ FASE 18.3: Alias para compatibilidade
+export const getMyBuildings = getUserBuildings;
+
 export const upgradeBuilding = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id || req.headers['user-id'] || 'test-user-id';
     const { buildingId } = req.params;
 
     const building = await buildingService.upgradeBuilding(userId, buildingId);
@@ -189,9 +193,28 @@ export const upgradeBuilding = async (req, res) => {
   }
 };
 
+// ✅ FASE 18.3: Alias para compatibilidade
+export const updateBuilding = upgradeBuilding;
+
+export const getBuilding = async (req, res) => {
+  try {
+    const { buildingId } = req.params;
+    const building = await buildingRepository.findByBuildingId(buildingId);
+
+    if (!building) {
+      return res.status(404).json({ error: 'Edifício não encontrado' });
+    }
+
+    res.json({ building });
+  } catch (error) {
+    console.error('Erro ao obter edifício:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const demolishBuilding = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id || req.headers['user-id'] || 'test-user-id';
     const { buildingId } = req.params;
 
     const result = await buildingService.demolishBuilding(userId, buildingId);
@@ -202,13 +225,69 @@ export const demolishBuilding = async (req, res) => {
   }
 };
 
+// ✅ FASE 18.3: Alias para compatibilidade
+export const deleteBuilding = demolishBuilding;
+
 export const getBuildingCost = async (req, res) => {
   try {
-    const { type, level } = req.query;
-    const cost = buildingService.calculateBuildingCost(type, parseInt(level) || 1);
+    const { type, level, cityId } = req.query;
+    let cost = buildingService.calculateBuildingCost(type, parseInt(level) || 1);
 
-    res.json({ type, level: parseInt(level) || 1, cost });
+    // ✅ FASE 18.6: Adicionar land_value da cidade ao custo se cityId for fornecido
+    if (cityId) {
+      try {
+        const cityRepository = (await import('../repositories/cityRepository.js')).default;
+        const city = await cityRepository.findByCityId(cityId);
+        if (city && city.landValue) {
+          cost += parseFloat(city.landValue);
+        }
+      } catch (error) {
+        console.warn('Erro ao buscar land_value da cidade:', error);
+        // Continuar sem adicionar land_value se houver erro
+      }
+    }
+
+    res.json({ type, level: parseInt(level) || 1, cost, cityId: cityId || null });
   } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * ✅ FASE 18.3: Obter yield atual de um edifício
+ */
+export const getBuildingYield = async (req, res) => {
+  try {
+    const { buildingId } = req.params;
+    const { calculateBuildingYield } = await import('../services/urbanEconomyService.js');
+    
+    const yieldData = await calculateBuildingYield(buildingId);
+    
+    res.json(yieldData);
+  } catch (error) {
+    console.error('Erro ao obter yield do edifício:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * ✅ FASE 18.3: Calcular yield previsto (antes de construir)
+ */
+export const predictYield = async (req, res) => {
+  try {
+    const { buildingType, level, cityId } = req.body;
+    
+    if (!buildingType || !level) {
+      return res.status(400).json({ error: 'buildingType e level são obrigatórios' });
+    }
+    
+    const { calculatePredictedYield } = await import('../services/urbanEconomyService.js');
+    
+    const yieldData = await calculatePredictedYield(buildingType, parseInt(level), cityId);
+    
+    res.json(yieldData);
+  } catch (error) {
+    console.error('Erro ao calcular yield previsto:', error);
     res.status(400).json({ error: error.message });
   }
 };

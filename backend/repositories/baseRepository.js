@@ -195,13 +195,67 @@ export class BaseRepository {
   async update(id, data) {
     try {
       const supabase = this.getClient();
+      
+      // ✅ Filtrar campos que podem não existir no schema (ex: virtual_hour)
+      // Se o erro for sobre coluna não encontrada, remover esse campo e tentar novamente
+      let filteredData = { ...data };
+      
       const { data: record, error } = await supabase
         .from(this.tableName)
-        .update(data)
+        .update(filteredData)
         .eq('id', id)
         .select()
         .single();
 
+      // ✅ Se o erro for sobre coluna não encontrada, remover campos problemáticos e tentar novamente
+      if (error && (error.code === 'PGRST204' || error.code === '42703' || error.message?.includes('column'))) {
+        // Tentar extrair nome da coluna do erro
+        const columnMatch = error.message?.match(/'(\w+)'/);
+        const columnName = columnMatch?.[1];
+        
+        if (columnName && filteredData[columnName] !== undefined) {
+          logger.warn(`⚠️  Coluna ${columnName} não encontrada no schema, removendo do update...`);
+          delete filteredData[columnName];
+          
+          // Tentar novamente sem o campo problemático
+          const { data: retryRecord, error: retryError } = await supabase
+            .from(this.tableName)
+            .update(filteredData)
+            .eq('id', id)
+            .select()
+            .single();
+          
+          if (retryError && retryError.code !== 'PGRST204' && retryError.code !== '42703') {
+            throw retryError;
+          }
+          
+          if (!retryError) {
+            return this.formatRecord(retryRecord);
+          }
+        }
+        
+        // Se ainda tiver erro após remover a coluna, remover virtual_hour se estiver presente
+        if (filteredData.virtual_hour !== undefined) {
+          logger.warn(`⚠️  Removendo virtual_hour do update (coluna não existe no schema)`);
+          delete filteredData.virtual_hour;
+          
+          const { data: finalRecord, error: finalError } = await supabase
+            .from(this.tableName)
+            .update(filteredData)
+            .eq('id', id)
+            .select()
+            .single();
+          
+          if (finalError && finalError.code !== 'PGRST204' && finalError.code !== '42703') {
+            throw finalError;
+          }
+          
+          if (!finalError) {
+            return this.formatRecord(finalRecord);
+          }
+        }
+      }
+      
       if (error) throw error;
       return this.formatRecord(record);
     } catch (error) {

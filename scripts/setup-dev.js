@@ -96,7 +96,7 @@ function main() {
   
   if (depsOk) {
     log('\n✅ Ambiente pronto! Iniciando servidores...\n', 'green');
-    log('📡 Backend: http://localhost:5000', 'cyan');
+    log('📡 Backend: http://localhost:3001', 'cyan');
     log('🌐 Frontend: http://localhost:5173\n', 'blue');
   } else {
     process.exit(1);

@@ -1,5 +1,7 @@
 import * as turf from '@turf/turf';
 import { getCountryId, getCountryName } from './countryUtils';
+import { debounce } from './debounce';
+import { performanceMonitor } from './performanceMonitor';
 
 /**
  * ✅ Identificar país a partir de coordenadas do clique no mapa Leaflet
@@ -121,4 +123,72 @@ export const identifyCountryFromMapClick = (latlng, countriesData) => {
     valid: false
   };
 };
+
+/**
+ * ✅ FASE 18.2: Identificar hierarquia completa (País > Estado > Cidade) usando API
+ * Usa a nova API de geografia para identificar a hierarquia administrativa completa
+ * 
+ * @param {Object} latlng - Objeto com lat e lng do clique
+ * @returns {Promise<Object>} - { country, state, city, valid }
+ */
+/**
+ * ✅ FASE 18.7: Versão com debounce para evitar requisições excessivas
+ */
+// ✅ FASE 18.6: Função base para identificar hierarquia (sem debounce para uso imediato)
+const _identifyHierarchyFromMapClickBase = async (latlng) => {
+  if (!latlng || typeof latlng.lat !== 'number' || typeof latlng.lng !== 'number') {
+    return {
+      valid: false,
+      country: null,
+      state: null,
+      city: null,
+      message: 'Coordenadas inválidas'
+    };
+  }
+
+  performanceMonitor.start(`mapClick:hierarchy:${latlng.lat}:${latlng.lng}`);
+
+  try {
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+    const response = await fetch(`${API_BASE_URL}/geography/identify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        lat: latlng.lat,
+        lng: latlng.lng
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro ao identificar hierarquia: ${response.status}`);
+    }
+
+    const data = await response.json();
+    performanceMonitor.end(`mapClick:hierarchy:${latlng.lat}:${latlng.lng}`);
+    return data;
+  } catch (error) {
+    // ✅ FASE 19.1: Fallback - retornar dados padrão se API falhar
+    console.warn('API de geografia retornou erro, usando fallback (dados padrão):', error.message);
+    performanceMonitor.end(`mapClick:hierarchy:${latlng.lat}:${latlng.lng}`);
+    // Fallback: retornar dados padrão para permitir que o mapa continue funcionando
+    return {
+      valid: false,
+      country: {
+        id: 'UNK',
+        name: 'Local Desconhecido'
+      },
+      state: null,
+      city: null,
+      message: error.message || 'Erro ao identificar hierarquia (modo offline)'
+    };
+  }
+};
+
+// ✅ Versão com debounce para uso em outros contextos
+export const identifyHierarchyFromMapClick = debounce(_identifyHierarchyFromMapClickBase, 300);
+
+// ✅ Versão sem debounce para uso imediato (ex: onMapClick)
+export const identifyHierarchyFromMapClickImmediate = _identifyHierarchyFromMapClickBase;
 

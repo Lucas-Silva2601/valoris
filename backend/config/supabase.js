@@ -92,7 +92,7 @@ const attemptReconnect = async () => {
 /**
  * ✅ Função principal de conexão - NÃO TRAVA O SERVIDOR
  */
-const connectDB = async () => {
+const connectDB = async (skipAutoSeed = false) => {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -126,12 +126,14 @@ const connectDB = async () => {
     logger.info(`✅ Supabase conectado`);
     logger.info(`📊 Projeto: ${supabaseUrl}`);
 
-    // ✅ Executar seed automático após conexão bem-sucedida
-    try {
-      const { seedDatabase } = await import('../utils/seedDatabase.js');
-      await seedDatabase();
-    } catch (seedError) {
-      logger.warn('⚠️  Erro ao executar seed automático (não crítico):', seedError.message);
+    // ✅ Executar seed automático após conexão bem-sucedida (se não for skipado)
+    if (!skipAutoSeed && !process.env.SKIP_AUTO_SEED) {
+      try {
+        const { seedDatabase } = await import('../utils/seedDatabase.js');
+        await seedDatabase();
+      } catch (seedError) {
+        logger.warn('⚠️  Erro ao executar seed automático (não crítico):', seedError.message);
+      }
     }
   } catch (error) {
     isConnected = false;
@@ -152,6 +154,13 @@ const connectDB = async () => {
     // Tentar reconectar automaticamente
     setTimeout(() => attemptReconnect(), RECONNECT_DELAY);
   }
+};
+
+/**
+ * ✅ Inicializar cliente manualmente (sem seed automático)
+ */
+export const initializeSupabase = async () => {
+  return await connectDB(true); // skipAutoSeed = true
 };
 
 export default connectDB;

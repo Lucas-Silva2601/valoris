@@ -58,7 +58,74 @@ VALUES (
 ON CONFLICT (id) DO NOTHING; -- Não inserir se já existir
 
 -- ============================================
--- TABELA: buildings (criar ANTES de npcs pois npcs referencia)
+-- TABELA: states (criar ANTES de cities e buildings)
+-- ============================================
+CREATE TABLE IF NOT EXISTS states (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  state_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  code VARCHAR(10),
+  country_id VARCHAR(10) NOT NULL,
+  country_name VARCHAR(255) NOT NULL,
+  geometry JSONB, -- GeoJSON do polígono do estado
+  treasury_balance DECIMAL(15, 2) DEFAULT 0.00 CHECK (treasury_balance >= 0), -- ✅ FASE 18.5: Saldo do tesouro estadual
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_states_state_id ON states(state_id);
+CREATE INDEX IF NOT EXISTS idx_states_country_id ON states(country_id);
+CREATE INDEX IF NOT EXISTS idx_states_code ON states(code);
+
+-- ============================================
+-- TABELA: cities (criar ANTES de buildings)
+-- ============================================
+CREATE TABLE IF NOT EXISTS cities (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  city_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  state_id VARCHAR(50) NOT NULL REFERENCES states(state_id) ON DELETE CASCADE,
+  state_name VARCHAR(255) NOT NULL,
+  country_id VARCHAR(10) NOT NULL,
+  country_name VARCHAR(255) NOT NULL,
+  geometry JSONB, -- GeoJSON do polígono da cidade
+  land_value DECIMAL(15, 2) DEFAULT 1000.00 CHECK (land_value >= 0), -- Preço base da terra em Valions
+  population INTEGER DEFAULT 0 CHECK (population >= 0),
+  treasury_balance DECIMAL(15, 2) DEFAULT 0.00 CHECK (treasury_balance >= 0), -- ✅ FASE 18.5: Saldo do tesouro municipal
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cities_city_id ON cities(city_id);
+CREATE INDEX IF NOT EXISTS idx_cities_state_id ON cities(state_id);
+CREATE INDEX IF NOT EXISTS idx_cities_country_id ON cities(country_id);
+
+-- ============================================
+-- TABELA: lots (lotes dentro de cidades)
+-- ============================================
+CREATE TABLE IF NOT EXISTS lots (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  lot_id VARCHAR(255) UNIQUE NOT NULL,
+  city_id VARCHAR(50) NOT NULL REFERENCES cities(city_id) ON DELETE CASCADE,
+  position_lat DECIMAL(10, 7) NOT NULL CHECK (position_lat >= -90 AND position_lat <= 90),
+  position_lng DECIMAL(11, 7) NOT NULL CHECK (position_lng >= -180 AND position_lng <= 180),
+  grid_x INTEGER NOT NULL,
+  grid_y INTEGER NOT NULL,
+  is_occupied BOOLEAN DEFAULT FALSE,
+  building_id UUID REFERENCES buildings(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(city_id, grid_x, grid_y) -- Um lote por posição na grade da cidade
+);
+
+CREATE INDEX IF NOT EXISTS idx_lots_lot_id ON lots(lot_id);
+CREATE INDEX IF NOT EXISTS idx_lots_city_id ON lots(city_id);
+CREATE INDEX IF NOT EXISTS idx_lots_building_id ON lots(building_id);
+CREATE INDEX IF NOT EXISTS idx_lots_occupied ON lots(is_occupied);
+CREATE INDEX IF NOT EXISTS idx_lots_grid ON lots(city_id, grid_x, grid_y);
+
+-- ============================================
+-- TABELA: buildings (criar DEPOIS de cities e states)
 -- ============================================
 CREATE TABLE IF NOT EXISTS buildings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -66,6 +133,11 @@ CREATE TABLE IF NOT EXISTS buildings (
   owner_id UUID REFERENCES users(id) ON DELETE SET NULL, -- ✅ Permitir NULL temporariamente para fase de teste
   country_id VARCHAR(10) NOT NULL,
   country_name VARCHAR(255) NOT NULL,
+  state_id VARCHAR(50) REFERENCES states(state_id) ON DELETE SET NULL, -- ✅ Novo campo FASE 18
+  state_name VARCHAR(255), -- ✅ Novo campo FASE 18
+  city_id VARCHAR(50) REFERENCES cities(city_id) ON DELETE SET NULL, -- ✅ Novo campo FASE 18
+  city_name VARCHAR(255), -- ✅ Novo campo FASE 18
+  lot_id UUID REFERENCES lots(id) ON DELETE SET NULL, -- ✅ Novo campo FASE 18
   type VARCHAR(20) NOT NULL CHECK (type IN ('house', 'apartment', 'office', 'skyscraper', 'factory', 'mall')),
   name VARCHAR(255) NOT NULL,
   position_lat DECIMAL(10, 7) NOT NULL CHECK (position_lat >= -90 AND position_lat <= 90),
@@ -74,6 +146,7 @@ CREATE TABLE IF NOT EXISTS buildings (
   cost DECIMAL(15, 2) NOT NULL CHECK (cost >= 0),
   capacity INTEGER DEFAULT 10 CHECK (capacity >= 0),
   revenue_per_hour DECIMAL(15, 2) DEFAULT 0.00 CHECK (revenue_per_hour >= 0),
+  yield_rate DECIMAL(5, 2) DEFAULT 0.00 CHECK (yield_rate >= 0), -- ✅ Taxa de retorno (FASE 18)
   condition INTEGER DEFAULT 100 CHECK (condition >= 0 AND condition <= 100),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -82,12 +155,16 @@ CREATE TABLE IF NOT EXISTS buildings (
 CREATE INDEX IF NOT EXISTS idx_buildings_building_id ON buildings(building_id);
 CREATE INDEX IF NOT EXISTS idx_buildings_owner_id ON buildings(owner_id);
 CREATE INDEX IF NOT EXISTS idx_buildings_country_id ON buildings(country_id);
+CREATE INDEX IF NOT EXISTS idx_buildings_state_id ON buildings(state_id); -- ✅ Novo índice FASE 18
+CREATE INDEX IF NOT EXISTS idx_buildings_city_id ON buildings(city_id); -- ✅ Novo índice FASE 18
+CREATE INDEX IF NOT EXISTS idx_buildings_lot_id ON buildings(lot_id); -- ✅ Novo índice FASE 18
 CREATE INDEX IF NOT EXISTS idx_buildings_type ON buildings(type);
 -- Índice composto para queries geográficas (sem PostGIS)
 CREATE INDEX IF NOT EXISTS idx_buildings_position ON buildings(position_lat, position_lng);
 
 -- ============================================
--- TABELA: npcs (criar DEPOIS de buildings pois referencia)
+-- TABELA: npcs (criar DEPOIS de buildings e cities pois referencia)
+-- ✅ FASE 18.5: NPCs com hierarquia urbana e rotinas
 -- ============================================
 CREATE TABLE IF NOT EXISTS npcs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -95,17 +172,25 @@ CREATE TABLE IF NOT EXISTS npcs (
   name VARCHAR(100) NOT NULL,
   country_id VARCHAR(10) NOT NULL,
   country_name VARCHAR(255) NOT NULL,
+  state_id VARCHAR(50) REFERENCES states(state_id) ON DELETE SET NULL, -- ✅ FASE 18.5
+  state_name VARCHAR(255), -- ✅ FASE 18.5
+  city_id VARCHAR(50) REFERENCES cities(city_id) ON DELETE SET NULL, -- ✅ FASE 18.5: Cidade onde o NPC vive
+  city_name VARCHAR(255), -- ✅ FASE 18.5
   position_lat DECIMAL(10, 7) NOT NULL CHECK (position_lat >= -90 AND position_lat <= 90),
   position_lng DECIMAL(11, 7) NOT NULL CHECK (position_lng >= -180 AND position_lng <= 180),
   target_position_lat DECIMAL(10, 7),
   target_position_lng DECIMAL(11, 7),
-  home_building_id UUID REFERENCES buildings(id) ON DELETE SET NULL,
-  work_building_id UUID REFERENCES buildings(id) ON DELETE SET NULL,
+  home_building_id UUID REFERENCES buildings(id) ON DELETE SET NULL, -- ✅ FASE 18.5: Casa do NPC
+  work_building_id UUID REFERENCES buildings(id) ON DELETE SET NULL, -- ✅ FASE 18.5: Trabalho do NPC
   status VARCHAR(20) DEFAULT 'idle' CHECK (status IN ('idle', 'walking', 'working', 'resting')),
+  routine_state VARCHAR(30) DEFAULT 'resting' CHECK (routine_state IN ('resting', 'going_to_work', 'working', 'going_home')), -- ✅ FASE 18.5: Estado da rotina
+  virtual_hour INTEGER DEFAULT 8 CHECK (virtual_hour >= 0 AND virtual_hour <= 23), -- ✅ FASE 18.5: Hora virtual (0-23)
   skin_color VARCHAR(20),
   current_task VARCHAR(20) DEFAULT 'idle' CHECK (current_task IN ('idle', 'walking', 'working', 'resting')),
   speed DECIMAL(5, 2) DEFAULT 5.00 CHECK (speed >= 0),
   direction DECIMAL(5, 2) DEFAULT 0 CHECK (direction >= 0 AND direction <= 360),
+  current_route JSONB DEFAULT '[]'::jsonb, -- ✅ FASE 18.5: Rota urbana otimizada (array de pontos)
+  route_index INTEGER DEFAULT 0, -- ✅ FASE 18.5: Índice atual na rota
   last_movement_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   next_action_time TIMESTAMP WITH TIME ZONE,
   npc_type VARCHAR(20) DEFAULT 'resident' CHECK (npc_type IN ('resident', 'worker', 'tourist', 'student')),
@@ -115,7 +200,12 @@ CREATE TABLE IF NOT EXISTS npcs (
 
 CREATE INDEX IF NOT EXISTS idx_npcs_npc_id ON npcs(npc_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_country_id ON npcs(country_id);
+CREATE INDEX IF NOT EXISTS idx_npcs_city_id ON npcs(city_id); -- ✅ FASE 18.5
+CREATE INDEX IF NOT EXISTS idx_npcs_state_id ON npcs(state_id); -- ✅ FASE 18.5
 CREATE INDEX IF NOT EXISTS idx_npcs_status ON npcs(status);
+CREATE INDEX IF NOT EXISTS idx_npcs_routine_state ON npcs(routine_state); -- ✅ FASE 18.5
+CREATE INDEX IF NOT EXISTS idx_npcs_home_building ON npcs(home_building_id); -- ✅ FASE 18.5
+CREATE INDEX IF NOT EXISTS idx_npcs_work_building ON npcs(work_building_id); -- ✅ FASE 18.5
 CREATE INDEX IF NOT EXISTS idx_npcs_home_building ON npcs(home_building_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_work_building ON npcs(work_building_id);
 -- Índice composto para queries geográficas (sem PostGIS)
@@ -440,6 +530,189 @@ CREATE TRIGGER update_player_profiles_updated_at BEFORE UPDATE ON player_profile
 
 CREATE TRIGGER update_country_defense_updated_at BEFORE UPDATE ON country_defense
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- ✅ FASE 19.3: FUNÇÕES DE TRANSAÇÃO ATÔMICA
+-- ============================================
+
+/**
+ * Transação atômica: Comprar imóvel
+ * Garante que subtração de saldo e transferência de propriedade ocorrem juntos ou nenhum ocorre
+ */
+CREATE OR REPLACE FUNCTION purchase_property_atomic(
+  p_listing_id VARCHAR(255),
+  p_buyer_id VARCHAR(255),
+  p_price DECIMAL(15, 2),
+  p_broker_fee DECIMAL(15, 2),
+  p_net_amount DECIMAL(15, 2),
+  p_building_id UUID,
+  p_seller_id VARCHAR(255)
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_buyer_wallet_id UUID;
+  v_seller_wallet_id UUID;
+  v_buyer_balance DECIMAL(15, 2);
+  v_seller_balance DECIMAL(15, 2);
+  v_result JSONB;
+BEGIN
+  -- Iniciar transação implícita (PostgreSQL)
+  
+  -- 1. Buscar carteiras do comprador e vendedor
+  SELECT id, balance INTO v_buyer_wallet_id, v_buyer_balance
+  FROM wallets WHERE user_id = p_buyer_id;
+  
+  SELECT id, balance INTO v_seller_wallet_id, v_seller_balance
+  FROM wallets WHERE user_id = p_seller_id;
+  
+  -- 2. Validar saldo do comprador
+  IF v_buyer_balance < p_price THEN
+    RAISE EXCEPTION 'Saldo insuficiente. Necessário: %, Disponível: %', p_price, v_buyer_balance;
+  END IF;
+  
+  -- 3. Subtrair saldo do comprador
+  UPDATE wallets 
+  SET balance = balance - p_price,
+      total_spent = COALESCE(total_spent, 0) + p_price,
+      updated_at = NOW()
+  WHERE id = v_buyer_wallet_id;
+  
+  -- 4. Adicionar saldo ao vendedor
+  UPDATE wallets 
+  SET balance = balance + p_net_amount,
+      total_earned = COALESCE(total_earned, 0) + p_net_amount,
+      updated_at = NOW()
+  WHERE id = v_seller_wallet_id;
+  
+  -- 5. Transferir propriedade do edifício
+  UPDATE buildings 
+  SET owner_id = p_buyer_id,
+      updated_at = NOW()
+  WHERE id = p_building_id;
+  
+  -- 6. Marcar listagem como vendida
+  UPDATE property_listings
+  SET status = 'sold',
+      updated_at = NOW()
+  WHERE listing_id = p_listing_id;
+  
+  -- Retornar sucesso
+  v_result := jsonb_build_object(
+    'success', true,
+    'buyer_new_balance', v_buyer_balance - p_price,
+    'seller_new_balance', v_seller_balance + p_net_amount
+  );
+  
+  RETURN v_result;
+  
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Em caso de erro, PostgreSQL automaticamente faz ROLLBACK
+    RAISE EXCEPTION 'Erro na transação de compra de imóvel: %', SQLERRM;
+END;
+$$;
+
+/**
+ * Transação atômica: Construir edifício
+ * Garante que subtração de saldo e criação de edifício ocorrem juntos ou nenhum ocorre
+ */
+CREATE OR REPLACE FUNCTION build_building_atomic(
+  p_user_id VARCHAR(255),
+  p_cost DECIMAL(15, 2),
+  p_building_data JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_wallet_id UUID;
+  v_balance DECIMAL(15, 2);
+  v_building_id UUID;
+  v_result JSONB;
+BEGIN
+  -- Iniciar transação implícita (PostgreSQL)
+  
+  -- 1. Buscar carteira do usuário
+  SELECT id, balance INTO v_wallet_id, v_balance
+  FROM wallets WHERE user_id = p_user_id;
+  
+  IF v_wallet_id IS NULL THEN
+    RAISE EXCEPTION 'Carteira não encontrada para usuário: %', p_user_id;
+  END IF;
+  
+  -- 2. Validar saldo
+  IF v_balance < p_cost THEN
+    RAISE EXCEPTION 'Saldo insuficiente. Necessário: %, Disponível: %', p_cost, v_balance;
+  END IF;
+  
+  -- 3. Subtrair saldo
+  UPDATE wallets 
+  SET balance = balance - p_cost,
+      total_spent = COALESCE(total_spent, 0) + p_cost,
+      updated_at = NOW()
+  WHERE id = v_wallet_id;
+  
+  -- 4. Criar edifício
+  INSERT INTO buildings (
+    building_id,
+    owner_id,
+    country_id,
+    country_name,
+    state_id,
+    state_name,
+    city_id,
+    city_name,
+    type,
+    position_lat,
+    position_lng,
+    level,
+    cost,
+    name,
+    capacity,
+    revenue_per_hour,
+    condition,
+    created_at,
+    updated_at
+  ) VALUES (
+    (p_building_data->>'buildingId')::VARCHAR(255),
+    p_user_id,
+    (p_building_data->>'countryId')::VARCHAR(10),
+    (p_building_data->>'countryName')::VARCHAR(255),
+    NULLIF(p_building_data->>'stateId', 'null')::VARCHAR(50),
+    NULLIF(p_building_data->>'stateName', 'null')::VARCHAR(255),
+    NULLIF(p_building_data->>'cityId', 'null')::VARCHAR(50),
+    NULLIF(p_building_data->>'cityName', 'null')::VARCHAR(255),
+    (p_building_data->>'type')::VARCHAR(50),
+    (p_building_data->>'position')->>'lat'::DECIMAL(10, 7),
+    (p_building_data->>'position')->>'lng'::DECIMAL(11, 7),
+    COALESCE((p_building_data->>'level')::INTEGER, 1),
+    p_cost,
+    (p_building_data->>'name')::VARCHAR(255),
+    COALESCE((p_building_data->>'capacity')::INTEGER, 10),
+    COALESCE((p_building_data->>'revenuePerHour')::DECIMAL(10, 2), 0),
+    COALESCE((p_building_data->>'condition')::INTEGER, 100),
+    NOW(),
+    NOW()
+  )
+  RETURNING id INTO v_building_id;
+  
+  -- Retornar sucesso
+  v_result := jsonb_build_object(
+    'success', true,
+    'building_id', v_building_id,
+    'new_balance', v_balance - p_cost
+  );
+  
+  RETURN v_result;
+  
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Em caso de erro, PostgreSQL automaticamente faz ROLLBACK
+    RAISE EXCEPTION 'Erro na transação de construção de edifício: %', SQLERRM;
+END;
+$$;
 
 -- ============================================
 -- RLS (Row Level Security) - Desabilitado por padrão

@@ -1,7 +1,5 @@
 import { io } from 'socket.io-client';
-
-// ✅ URL do Socket.io - Porta 3001
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+import { getSocketUrl } from '../config/api';
 
 // Obter userId do localStorage ou usar padrão para testes
 const getUserId = () => {
@@ -12,88 +10,155 @@ const getUsername = () => {
   return localStorage.getItem('username') || 'testuser';
 };
 
-// ✅ CONFIGURAÇÃO RESILIENTE - NÃO TRAVA A APLICAÇÃO
-export const socket = io(SOCKET_URL, {
-  autoConnect: false,
-  reconnection: true,
-  reconnectionDelay: 5000, // ✅ Aumentado para 5 segundos (era 1 segundo)
-  reconnectionDelayMax: 30000, // ✅ Máximo de 30 segundos entre tentativas
-  reconnectionAttempts: Infinity, // Tentar infinitamente
-  timeout: 20000,
-  transports: ['websocket', 'polling'], // Tentar websocket primeiro, depois polling
-  upgrade: true,
-  rememberUpgrade: true,
-  // ✅ Desabilitar logs excessivos em produção
-  forceNew: false,
-  auth: {
-    userId: getUserId(),
-    username: getUsername(),
-    token: localStorage.getItem('token') || null
-  },
-  // Headers adicionais para autenticação
-  extraHeaders: {
-    'user-id': getUserId()
-  }
-});
+// ✅ CONEXÃO DINÂMICA - Aguarda config do backend
+let socketInstance = null;
+let isInitializing = false;
+let initPromise = null;
 
-// ✅ Eventos de conexão - Logs reduzidos para não travar aplicação
-let reconnectAttemptCount = 0;
-const MAX_LOGS = 5; // Limitar logs para não encher o console
-
-socket.on('connect', () => {
-  reconnectAttemptCount = 0; // Resetar contador ao conectar
-  console.log('✅ Socket.io CONECTADO:', socket.id);
-});
-
-socket.on('disconnect', (reason) => {
-  // ✅ Log apenas se não for reconexão automática
-  if (reason !== 'io client disconnect') {
-    if (reconnectAttemptCount < MAX_LOGS) {
-      console.log('⚠️  Socket.io desconectado:', reason);
-    }
+/**
+ * ✅ Inicializa Socket.io com URL dinâmica do backend
+ */
+async function initializeSocket() {
+  // Se já está inicializando, aguardar a promise existente
+  if (isInitializing && initPromise) {
+    return initPromise;
   }
   
-  if (reason === 'io server disconnect') {
-    // Servidor forçou desconexão, reconectar manualmente após delay
-    setTimeout(() => {
-      socket.connect();
-    }, 5000);
+  // Se já foi inicializado, retornar instância
+  if (socketInstance) {
+    return socketInstance;
   }
-});
+  
+  isInitializing = true;
+  
+  initPromise = (async () => {
+    try {
+      console.log('⚡ Inicializando Socket.io...');
+      
+      // ✅ PROTEÇÃO: Aguardar URL estar pronta
+      const socketUrl = await getSocketUrl();
+      
+      if (!socketUrl) {
+        throw new Error('Socket URL não configurada');
+      }
+      
+      console.log(`   Conectando em: ${socketUrl}`);
+      
+      socketInstance = io(socketUrl, {
+        autoConnect: false,  // ✅ Não conectar automaticamente
+        reconnection: true,
+        reconnectionDelay: 5000,
+        reconnectionDelayMax: 30000,
+        reconnectionAttempts: Infinity,
+        timeout: 20000,
+        transports: ['websocket', 'polling'],
+        upgrade: true,
+        rememberUpgrade: true,
+        forceNew: false,
+        auth: {
+          userId: getUserId(),
+          username: getUsername(),
+          token: localStorage.getItem('token') || null
+        },
+        extraHeaders: {
+          'user-id': getUserId()
+        }
+      });
+      
+      setupSocketEvents(socketInstance);
+      
+      console.log('✅ Socket.io instanciado com sucesso');
+      isInitializing = false;
+      return socketInstance;
+    } catch (error) {
+      console.error('❌ Erro ao inicializar Socket.io:', error);
+      isInitializing = false;
+      initPromise = null;
+      return null;
+    }
+  })();
+  
+  return initPromise;
+}
 
-socket.on('connect_error', (error) => {
-  reconnectAttemptCount++;
-  // ✅ Log apenas as primeiras tentativas para não encher o console
-  if (reconnectAttemptCount <= MAX_LOGS) {
-    console.warn(`⚠️  Erro de conexão Socket.io (tentativa ${reconnectAttemptCount}):`, error.message);
+/**
+ * ✅ Configurar event listeners do Socket.io
+ */
+function setupSocketEvents(socket) {
+  let reconnectAttemptCount = 0;
+  const MAX_LOGS = 5;
+  
+  socket.on('connect', () => {
+    reconnectAttemptCount = 0;
+    console.log('✅ Socket.io CONECTADO:', socket.id);
+  });
+  
+  socket.on('disconnect', (reason) => {
+    if (reason !== 'io client disconnect') {
+      if (reconnectAttemptCount < MAX_LOGS) {
+        console.log('⚠️  Socket.io desconectado:', reason);
+      }
+    }
+    
+    // Se o servidor forçar desconexão, reconectar após delay
+    if (reason === 'io server disconnect') {
+      setTimeout(() => {
+        if (socket && !socket.connected) {
+          console.log('🔄 Tentando reconectar...');
+          socket.connect();
+        }
+      }, 5000);
+    }
+  });
+  
+  socket.on('connect_error', (error) => {
+    reconnectAttemptCount++;
+    if (reconnectAttemptCount <= MAX_LOGS) {
+      console.warn(`⚠️  Erro de conexão Socket.io (tentativa ${reconnectAttemptCount}):`, error.message);
+    }
+  });
+  
+  socket.on('reconnect_attempt', (attemptNumber) => {
+    if (attemptNumber % 5 === 0 || attemptNumber <= MAX_LOGS) {
+      console.log(`🔄 Tentativa de reconexão ${attemptNumber}...`);
+    }
+  });
+  
+  socket.on('reconnect_failed', () => {
+    console.warn('⚠️  Falha ao reconectar Socket.io. Sistema continuará em modo offline.');
+  });
+  
+  socket.on('reconnect_error', (error) => {
+    reconnectAttemptCount++;
+    if (reconnectAttemptCount <= MAX_LOGS) {
+      console.warn(`⚠️  Erro na reconexão (tentativa ${reconnectAttemptCount}):`, error.message);
+    }
+  });
+  
+  socket.on('reconnect', (attemptNumber) => {
+    reconnectAttemptCount = 0;
+    console.log(`✅ Socket.io reconectado após ${attemptNumber} tentativas`);
+  });
+}
+
+/**
+ * ✅ Obtém instância do Socket.io (aguarda inicialização se necessário)
+ */
+export async function getSocket() {
+  if (!socketInstance) {
+    await initializeSocket();
   }
-  // Não travar a aplicação - apenas logar
-});
+  return socketInstance;
+}
 
-socket.on('reconnect_attempt', (attemptNumber) => {
-  // ✅ Log apenas a cada 5 tentativas para não encher o console
-  if (attemptNumber % 5 === 0 || attemptNumber <= MAX_LOGS) {
-    console.log(`🔄 Tentativa de reconexão ${attemptNumber}...`);
-  }
-});
+/**
+ * ✅ Exportar instância síncrona (pode ser null inicialmente)
+ * USE getSocket() para aguardar inicialização completa
+ */
+export let socket = null;
 
-socket.on('reconnect_failed', () => {
-  console.warn('⚠️  Falha ao reconectar Socket.io. Continuando em modo offline.');
-  // ✅ Não travar - aplicação continua funcionando
-});
-
-socket.on('reconnect_error', (error) => {
-  reconnectAttemptCount++;
-  // ✅ Log apenas as primeiras tentativas
-  if (reconnectAttemptCount <= MAX_LOGS) {
-    console.warn(`⚠️  Erro na reconexão (tentativa ${reconnectAttemptCount}):`, error.message);
-  }
-});
-
-socket.on('reconnect', (attemptNumber) => {
-  reconnectAttemptCount = 0;
-  console.log(`✅ Socket.io reconectado após ${attemptNumber} tentativas`);
-});
+// ⚠️ NÃO inicializar automaticamente ao carregar módulo
+// A inicialização será feita apenas quando getSocket() for chamado
+// Isso evita tentativas de conexão antes da configuração estar pronta
 
 export default socket;
-

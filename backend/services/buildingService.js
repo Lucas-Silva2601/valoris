@@ -1,5 +1,4 @@
 import buildingRepository from '../repositories/buildingRepository.js';
-import npcRepository from '../repositories/npcRepository.js';
 import { subtractBalance } from './walletService.js';
 import { checkConnection } from '../config/supabase.js';
 import { createLogger } from '../utils/logger.js';
@@ -112,12 +111,14 @@ export const calculateBuildingCost = (type, level = 1) => {
 
 /**
  * Construir edifício
+ * ✅ FASE 19.1: Protegido com tratamento de erros para nunca crashar o servidor
  */
 export const buildBuilding = async (userId, countryId, countryName, type, lat, lng, level = 1, validateGeography = true) => {
-  // Validar coordenadas
-  if (typeof lat !== 'number' || typeof lng !== 'number') {
-    throw new Error('Coordenadas inválidas. lat e lng devem ser números.');
-  }
+  try {
+    // Validar coordenadas
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      throw new Error('Coordenadas inválidas. lat e lng devem ser números.');
+    }
 
   if (lat < -90 || lat > 90) {
     throw new Error('Latitude inválida. Deve estar entre -90 e 90.');
@@ -158,6 +159,24 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
   // Calcular custo
   const cost = calculateBuildingCost(type, level);
 
+  // ✅ FASE 19.3: Validar referências antes de criar edifício
+  try {
+    const { validateReferences } = await import('./transactionService.js');
+    const validation = await validateReferences({
+      userId,
+      cityId: stateId ? null : null, // Será validado após identificar hierarquia
+      stateId: stateId || null,
+      countryId: finalCountryId
+    });
+    
+    if (!validation.valid && validation.errors.length > 0) {
+      logger.warn(`⚠️ Referências podem não existir ainda: ${validation.errors.join(', ')}`);
+      // Não bloquear, mas logar aviso
+    }
+  } catch (validationError) {
+    logger.warn(`⚠️ Erro ao validar referências (não crítico): ${validationError.message}`);
+  }
+
   // ✅ Garantir que o usuário existe no banco (necessário para foreign key)
   const { ensureTestUserExists } = await import('../utils/userUtils.js');
   const ownerUUID = await ensureTestUserExists(userId);
@@ -170,104 +189,227 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     throw new Error(`Saldo insuficiente. Você tem ${wallet.balance.toFixed(2)} VAL, mas precisa de ${cost} VAL`);
   }
 
-  // ✅ IMPORTANTE: Verificar edifícios próximos e ESPALHAR se necessário
-  // Se já existirem edifícios no mesmo país, gerar posição ALEATÓRIA ESPALHADA
+  // ✅ IMPORTANTE: SEMPRE adicionar JITTER de +/- 0.002 graus (como solicitado)
+  // Isso garante que construções fiquem espalhadas pela vizinhança, não uma em cima da outra
+  let finalLat = lat;
+  let finalLng = lng;
+  let countryFeature = null;
+  
+  // Buscar feature do país no GeoJSON (para usar tanto no jitter quanto na verificação de edifícios próximos)
   if (checkConnection()) {
-    const nearbyBuildings = await buildingRepository.findNearby(lng, lat, 5); // 5km de raio
+    const countriesGeoJSON = loadCountriesGeoJSON();
     
-    // ✅ Se houver edifícios próximos no MESMO país, gerar nova posição ALEATÓRIA ESPALHADA
-    const buildingsInSameCountry = nearbyBuildings.filter(b => 
-      (b.countryId === finalCountryId || b.country_id === finalCountryId)
-    );
+    // Buscar feature do país no GeoJSON
+    if (countriesGeoJSON && countriesGeoJSON.features) {
+      for (const feature of countriesGeoJSON.features) {
+        const props = feature.properties || {};
+        const featureCountryId = props.ISO_A3 || props.ADM0_A3 || props.ISO3 || props.ISO_A2;
+        if (featureCountryId === finalCountryId) {
+          countryFeature = feature;
+          break;
+        }
+      }
+    }
     
-    if (buildingsInSameCountry.length > 0) {
-      logger.info(`🏗️ Encontrados ${buildingsInSameCountry.length} edifícios próximos no país ${finalCountryName}. Gerando posição ESPALHADA...`);
+    // ✅ SEMPRE adicionar JITTER de +/- 0.002 graus (~222 metros) como solicitado
+    const jitterAmount = 0.002; // +/- 0.002 graus como solicitado
+    const offsetLat = (Math.random() - 0.5) * 2 * jitterAmount; // -0.002 a +0.002
+    const offsetLng = (Math.random() - 0.5) * 2 * jitterAmount; // -0.002 a +0.002
+    
+    const testLat = lat + offsetLat;
+    const testLng = lng + offsetLng;
+    
+    // ✅ Verificar se a posição com jitter está dentro do polígono do país
+    if (countryFeature && countryFeature.geometry) {
+      const point = turf.point([testLng, testLat]);
       
-      // ✅ Buscar feature do país no GeoJSON para gerar ponto aleatório
-      const countriesGeoJSON = loadCountriesGeoJSON();
-      let countryFeature = null;
-      
-      if (countriesGeoJSON && countriesGeoJSON.features) {
-        for (const feature of countriesGeoJSON.features) {
-          const props = feature.properties || {};
-          const featureCountryId = props.ISO_A3 || props.ADM0_A3 || props.ISO3 || props.ISO_A2;
-          if (featureCountryId === finalCountryId) {
-            countryFeature = feature;
+      // Verificar se está dentro do polígono
+      let isInside = false;
+      if (countryFeature.geometry.type === 'Polygon') {
+        const poly = turf.polygon(countryFeature.geometry.coordinates);
+        isInside = turf.booleanPointInPolygon(point, poly);
+      } else if (countryFeature.geometry.type === 'MultiPolygon') {
+        for (const coords of countryFeature.geometry.coordinates) {
+          const poly = turf.polygon(coords);
+          if (turf.booleanPointInPolygon(point, poly)) {
+            isInside = true;
             break;
           }
         }
       }
       
-      // ✅ Gerar ponto aleatório ESPALHADO dentro do país (até 50 tentativas)
-      if (countryFeature && countryFeature.geometry) {
-        let newPosition = null;
-        const bbox = turf.bbox(turf.feature(countryFeature.geometry));
-        
-        for (let attempt = 0; attempt < 50; attempt++) {
-          // Gerar coordenada aleatória dentro do bounding box
-          const randomLng = bbox[0] + Math.random() * (bbox[2] - bbox[0]);
-          const randomLat = bbox[1] + Math.random() * (bbox[3] - bbox[1]);
+      // ✅ Se estiver dentro do polígono, usar posição com jitter
+      if (isInside) {
+        finalLat = testLat;
+        finalLng = testLng;
+        logger.info(`✅ Jitter aplicado: ${offsetLat.toFixed(6)}, ${offsetLng.toFixed(6)} graus`);
+      } else {
+        // Se não estiver dentro, tentar ajustar para ficar dentro (até 10 tentativas)
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const adjustedOffsetLat = (Math.random() - 0.5) * 2 * jitterAmount;
+          const adjustedOffsetLng = (Math.random() - 0.5) * 2 * jitterAmount;
+          const adjustedTestLat = lat + adjustedOffsetLat;
+          const adjustedTestLng = lng + adjustedOffsetLng;
+          const adjustedPoint = turf.point([adjustedTestLng, adjustedTestLat]);
           
-          const point = turf.point([randomLng, randomLat]);
-          
-          // Verificar se está dentro do polígono
-          let isInside = false;
+          let adjustedIsInside = false;
           if (countryFeature.geometry.type === 'Polygon') {
             const poly = turf.polygon(countryFeature.geometry.coordinates);
-            isInside = turf.booleanPointInPolygon(point, poly);
+            adjustedIsInside = turf.booleanPointInPolygon(adjustedPoint, poly);
           } else if (countryFeature.geometry.type === 'MultiPolygon') {
             for (const coords of countryFeature.geometry.coordinates) {
               const poly = turf.polygon(coords);
-              if (turf.booleanPointInPolygon(point, poly)) {
-                isInside = true;
+              if (turf.booleanPointInPolygon(adjustedPoint, poly)) {
+                adjustedIsInside = true;
                 break;
               }
             }
           }
           
-          if (isInside) {
-            // ✅ Verificar se a nova posição está longe o suficiente dos edifícios existentes
-            const tooClose = buildingsInSameCountry.some(b => {
-              const bLat = b.position?.lat || b.position_lat;
-              const bLng = b.position?.lng || b.position_lng;
-              if (!bLat || !bLng) return false;
-              
-              // Calcular distância (aproximada em km)
-              const R = 6371; // Raio da Terra em km
-              const dLat = (randomLat - bLat) * Math.PI / 180;
-              const dLng = (randomLng - bLng) * Math.PI / 180;
-              const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                        Math.cos(bLat * Math.PI / 180) * Math.cos(randomLat * Math.PI / 180) *
-                        Math.sin(dLng / 2) * Math.sin(dLng / 2);
-              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-              const distanceKm = R * c;
-              
-              return distanceKm < 0.5; // Mínimo 500m de distância
-            });
-            
-            if (!tooClose) {
-              newPosition = { lat: randomLat, lng: randomLng };
-              logger.info(`✅ Nova posição ESPALHADA gerada: ${randomLat.toFixed(4)}, ${randomLng.toFixed(4)} (tentativa ${attempt + 1})`);
+          if (adjustedIsInside) {
+            finalLat = adjustedTestLat;
+            finalLng = adjustedTestLng;
+            logger.info(`✅ Jitter ajustado aplicado após ${attempt + 1} tentativas`);
+            break;
+          }
+        }
+        // Se não conseguir encontrar posição dentro após 10 tentativas, usar posição original (sem jitter)
+        logger.warn(`⚠️  Não foi possível aplicar jitter dentro do polígono. Usando coordenada original.`);
+      }
+    } else {
+      // Se não tiver GeoJSON, aplicar jitter diretamente (sem validação)
+      finalLat = testLat;
+      finalLng = testLng;
+      logger.info(`✅ Jitter aplicado (sem validação GeoJSON): ${offsetLat.toFixed(6)}, ${offsetLng.toFixed(6)} graus`);
+    }
+  } else {
+    // Se não tiver conexão, aplicar jitter diretamente
+    const jitterAmount = 0.002;
+    finalLat = lat + (Math.random() - 0.5) * 2 * jitterAmount;
+    finalLng = lng + (Math.random() - 0.5) * 2 * jitterAmount;
+    logger.info(`✅ Jitter aplicado (sem conexão): ${(finalLat - lat).toFixed(6)}, ${(finalLng - lng).toFixed(6)} graus`);
+  }
+  
+  // ✅ Garantir que coordenadas finais são válidas
+  if (isNaN(finalLat) || isNaN(finalLng)) {
+    logger.warn(`⚠️  Coordenadas finais inválidas após jitter. Usando coordenadas originais.`);
+    finalLat = lat;
+    finalLng = lng;
+  }
+  
+  // Usar coordenadas finais (com jitter aplicado)
+  lat = finalLat;
+  lng = finalLng;
+  
+  // ✅ Validar coordenadas finais antes de criar edifício
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    logger.error(`⚠️  Coordenadas finais inválidas após jitter: lat=${lat}, lng=${lng}`);
+    throw new Error('Coordenadas inválidas após aplicar jitter');
+  }
+
+  // ✅ Verificar se há edifícios próximos (apenas se countryFeature foi encontrado e há conexão)
+  if (checkConnection() && countryFeature && countryFeature.geometry) {
+    const nearbyBuildings = await buildingRepository.findNearby(lng, lat, 5); // 5km de raio
+    const buildingsInSameCountry = nearbyBuildings.filter(b => 
+      (b.countryId === finalCountryId || b.country_id === finalCountryId)
+    );
+    
+    if (buildingsInSameCountry.length > 0) {
+      // ✅ Se houver edifícios próximos, gerar posição aleatória ESPALHADA no país
+      logger.info(`🏗️ Encontrados ${buildingsInSameCountry.length} edifícios próximos. Gerando posição ESPALHADA...`);
+      
+      const bbox = turf.bbox(turf.feature(countryFeature.geometry));
+      let newPosition = null;
+      
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const randomLng = bbox[0] + Math.random() * (bbox[2] - bbox[0]);
+        const randomLat = bbox[1] + Math.random() * (bbox[3] - bbox[1]);
+        
+        const point = turf.point([randomLng, randomLat]);
+        
+        let isInside = false;
+        if (countryFeature.geometry.type === 'Polygon') {
+          const poly = turf.polygon(countryFeature.geometry.coordinates);
+          isInside = turf.booleanPointInPolygon(point, poly);
+        } else if (countryFeature.geometry.type === 'MultiPolygon') {
+          for (const coords of countryFeature.geometry.coordinates) {
+            const poly = turf.polygon(coords);
+            if (turf.booleanPointInPolygon(point, poly)) {
+              isInside = true;
               break;
             }
           }
         }
         
-        if (newPosition) {
-          lat = newPosition.lat;
-          lng = newPosition.lng;
-          logger.info(`🏗️ Posição ajustada para ESPALHAR construções: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-        } else {
-          logger.warn(`⚠️ Não foi possível gerar posição espalhada após 50 tentativas. Usando posição original.`);
+        if (isInside && !isNaN(randomLat) && !isNaN(randomLng) &&
+            randomLat >= -90 && randomLat <= 90 &&
+            randomLng >= -180 && randomLng <= 180) {
+          // Verificar distância mínima de 500m dos edifícios existentes
+          const tooClose = buildingsInSameCountry.some(b => {
+            const bLat = b.position?.lat || b.position_lat;
+            const bLng = b.position?.lng || b.position_lng;
+            if (!bLat || !bLng) return false;
+            
+            const point1 = turf.point([randomLng, randomLat]);
+            const point2 = turf.point([bLng, bLat]);
+            const distanceKm = turf.distance(point1, point2, { units: 'kilometers' });
+            
+            return distanceKm < 0.5; // Mínimo 500m
+          });
+          
+          if (!tooClose) {
+            newPosition = { lat: randomLat, lng: randomLng };
+            logger.info(`✅ Nova posição ESPALHADA gerada: ${randomLat.toFixed(4)}, ${randomLng.toFixed(4)}`);
+            break;
+          }
         }
       }
+      
+      if (newPosition) {
+        lat = newPosition.lat;
+        lng = newPosition.lng;
+      } else {
+        throw new Error('Não foi possível encontrar uma posição adequada para construir. Tente construir em outra área do país.');
+      }
     }
-    
-    // ✅ Verificar se ainda há edifício muito próximo (100m) - se sim, erro
-    const veryNearbyBuildings = await buildingRepository.findNearby(lng, lat, 0.1); // 100 metros
+  }
+
+  // ✅ Verificação final: se ainda há edifício muito próximo (100m), erro
+  if (checkConnection()) {
+    const veryNearbyBuildings = await buildingRepository.findNearby(lng, lat, 0.1);
     if (veryNearbyBuildings.length > 0) {
       throw new Error('Já existe um edifício muito próximo desta localização (distância mínima: 100m). Tente construir em outra área do país.');
     }
+  }
+
+  // ✅ FASE 18.5: Identificar hierarquia geográfica completa (País > Estado > Cidade)
+  let stateId = null;
+  let stateName = null;
+  let cityId = null;
+  let cityName = null;
+  
+  try {
+    const { identifyHierarchy } = await import('./geoHierarchyService.js');
+    const hierarchy = await identifyHierarchy(lat, lng);
+    
+    if (hierarchy.valid) {
+      if (hierarchy.state) {
+        stateId = hierarchy.state.id;
+        stateName = hierarchy.state.name;
+      }
+      
+      if (hierarchy.city) {
+        cityId = hierarchy.city.id;
+        cityName = hierarchy.city.name;
+      }
+      
+      logger.info(`✅ Hierarquia geográfica identificada: ${finalCountryName} > ${stateName || 'N/A'} > ${cityName || 'N/A'}`);
+    } else {
+      logger.warn(`⚠️  Hierarquia geográfica não identificada para ${lat}, ${lng}`);
+    }
+  } catch (error) {
+    logger.warn(`⚠️  Erro ao identificar hierarquia geográfica: ${error.message}`);
+    // Continuar sem hierarquia se houver erro
   }
 
   // Criar edifício
@@ -277,6 +419,11 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     ownerId: ownerUUID, // ✅ Usar UUID do usuário garantido
     countryId: finalCountryId,
     countryName: finalCountryName,
+    // ✅ FASE 18.5: Incluir hierarquia geográfica completa
+    stateId: stateId || null,
+    stateName: stateName || null,
+    cityId: cityId || null,
+    cityName: cityName || null,
     type,
     position: { lat, lng },
     level,
@@ -287,6 +434,31 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     condition: 100
   };
 
+  // ✅ FASE 19.3: Usar transação atômica se disponível (fallback para modo manual)
+  try {
+    const { buildBuildingAtomic } = await import('./transactionService.js');
+    
+    // Tentar usar transação atômica
+    const atomicResult = await buildBuildingAtomic(userId, cost, buildingData);
+    
+    if (atomicResult.success) {
+      // Buscar edifício criado pela função SQL
+      const building = await buildingRepository.findByBuildingId(buildingData.buildingId);
+      
+      if (building) {
+        logger.info(`🏗️ Edifício construído (transação atômica): ${buildingData.name} (${type}) nível ${level} em ${finalCountryName} (${finalCountryId})${cityName ? `, ${cityName}` : ''}${stateName ? `, ${stateName}` : ''} por usuário ${userId}`);
+        return building;
+      } else {
+        // Se não encontrou, criar manualmente (fallback)
+        logger.warn(`⚠️ Transação atômica executada mas edifício não encontrado. Criando manualmente...`);
+      }
+    }
+  } catch (atomicError) {
+    // Se transação atômica falhar, usar modo manual (compatibilidade retroativa)
+    logger.warn(`⚠️ Transação atômica não disponível ou falhou: ${atomicError.message}. Usando modo manual...`);
+  }
+
+  // Modo manual (fallback ou se transação atômica não estiver disponível)
   const building = await buildingRepository.create(buildingData);
 
   // Subtrair saldo
@@ -297,20 +469,24 @@ export const buildBuilding = async (userId, countryId, countryName, type, lat, l
     { buildingId, countryId: finalCountryId, type }
   );
 
-  logger.info(`🏗️ Edifício construído: ${buildingData.name} (${type}) nível ${level} em ${finalCountryName} (${finalCountryId}) por usuário ${userId}`);
+    logger.info(`🏗️ Edifício construído: ${buildingData.name} (${type}) nível ${level} em ${finalCountryName} (${finalCountryId})${cityName ? `, ${cityName}` : ''}${stateName ? `, ${stateName}` : ''} por usuário ${userId}`);
 
-  // Criar 10 NPCs construtores que vão para o local da construção
-  try {
-    const npcService = await import('./npcService.js');
-    if (npcService.createConstructionNPCs) {
-      const constructorsCreated = await npcService.createConstructionNPCs(building, 10);
-      logger.info(`👷 Criados ${constructorsCreated} NPCs construtores para ${buildingData.name}`);
-    }
+    return building;
   } catch (error) {
-    logger.error(`Erro ao criar NPCs construtores:`, error);
+    // ✅ FASE 19.1: Logar erro antes de relançar (middleware global vai capturar)
+    logger.error(`Erro ao construir edifício:`, {
+      error: error.message,
+      stack: error.stack,
+      userId,
+      countryId,
+      type,
+      lat,
+      lng,
+      level
+    });
+    // Relançar erro para o controller/middleware tratar
+    throw error;
   }
-
-  return building;
 };
 
 /**
@@ -461,27 +637,6 @@ export const demolishBuilding = async (userId, buildingId) => {
     throw new Error('Edifício não encontrado ou você não é o proprietário');
   }
 
-  // Remover NPCs associados (eles encontrarão novos lugares)
-  try {
-    const npcs = await npcRepository.findAll();
-    for (const npc of npcs) {
-      const needsUpdate = (npc.homeBuilding === building.id || npc.workBuilding === building.id);
-      if (needsUpdate) {
-        const updateData = {};
-        if (npc.homeBuilding === building.id && (building.type === 'house' || building.type === 'apartment')) {
-          updateData.homeBuilding = null;
-        }
-        if (npc.workBuilding === building.id && building.type !== 'house' && building.type !== 'apartment') {
-          updateData.workBuilding = null;
-        }
-        if (Object.keys(updateData).length > 0) {
-          await npcRepository.updateByNpcId(npc.npcId, updateData);
-        }
-      }
-    }
-  } catch (error) {
-    logger.warn('Erro ao atualizar NPCs associados ao edifício:', error);
-  }
 
   await buildingRepository.delete(building.id);
 

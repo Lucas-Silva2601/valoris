@@ -1,274 +1,127 @@
 import { useEffect, useState } from 'react';
-import { useMap } from 'react-leaflet';
 import { Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { getApiUrl } from '../config/api';
 
-// ✅ Cores de pele diversificadas (array hexadecimal)
-const SKIN_COLORS = [
-  '#f4d5bd', '#422d1a', '#d4a574', '#c19a6b',
-  '#8b6f47', '#5c4a3a', '#e6c4a0', '#b8916d',
-  '#6b4e3d', '#9d7a5a', '#a6896d', '#7a5c42'
-];
+// ✅ FASE 18.5: Criar ícone vertical para NPC (retângulo 4x10px com sombra)
+const createNPCIcon = (routineState) => {
+  // Cores baseadas no estado da rotina
+  const colors = {
+    resting: '#4CAF50',      // Verde - descansando
+    going_to_work: '#FF9800', // Laranja - indo para trabalho
+    working: '#2196F3',       // Azul - trabalhando
+    going_home: '#9C27B0'    // Roxo - voltando para casa
+  };
 
-/**
- * Gerar cor de pele aleatória baseada em tons de marrom, bege e bronze
- * Usa hash determinístico do ID para manter a cor consistente
- */
-const generateSkinColor = (npcId, skinColorFromDB = null) => {
-  // Se já tem cor no banco, usar ela
-  if (skinColorFromDB && SKIN_COLORS.includes(skinColorFromDB)) {
-    return skinColorFromDB;
-  }
-  
-  // Caso contrário, gerar baseado no ID
-  const hash = (npcId || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const colorIndex = hash % SKIN_COLORS.length;
-  return SKIN_COLORS[colorIndex];
-};
+  const color = colors[routineState] || '#757575';
 
-// Animação CSS global (adicionar apenas uma vez)
-let animationStyleAdded = false;
-const addAnimationStyle = () => {
-  if (animationStyleAdded || typeof document === 'undefined') return;
-  
-  const styleId = 'npc-bounce-animation';
-  if (document.getElementById(styleId)) return;
-  
-  const style = document.createElement('style');
-  style.id = styleId;
-  style.textContent = `
-    @keyframes npcBounce {
-      0%, 100% {
-        transform: translateY(0px);
-      }
-      50% {
-        transform: translateY(-3px);
-      }
-    }
-    .npc-walking {
-      will-change: transform;
-      animation-timing-function: ease-in-out;
-      animation-iteration-count: infinite;
-    }
-  `;
-  document.head.appendChild(style);
-  animationStyleAdded = true;
-};
-
-/**
- * ✅ Criar ícone customizado para NPC - retângulos coloridos
- * Retângulo pequeno (6px x 10px) que parece uma pessoa vista de cima
- */
-const createNPCIcon = (npcId, status, skinColor = null) => {
-  const color = generateSkinColor(npcId, skinColor);
-  
-  // ✅ Tamanhos diferentes baseados no status
-  // Retângulo vertical (6px de largura, 10px de altura) para parecer pessoa
-  const width = 6;
-  const height = 10;
-  
-  // Animação de pulinhos (bounce) para simular caminhada
-  // Usar hash do ID para delay consistente
-  const hash = (npcId || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const animationDelay = (hash % 50) / 100; // 0-0.5s delay
-  const animationDuration = 0.6 + ((hash % 40) / 100); // 0.6-1.0s
-  
-  // Adicionar estilo de animação global
-  addAnimationStyle();
-  
   return L.divIcon({
-    className: 'custom-npc-icon npc-walking',
-    html: `<div style="
-      width: ${width}px; 
-      height: ${height}px; 
-      background-color: ${color}; 
-      border: 1px solid rgba(0,0,0,0.4);
-      border-radius: 2px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.5);
-      animation: npcBounce ${animationDuration}s ease-in-out infinite;
-      animation-delay: ${animationDelay}s;
-    "></div>`,
-    iconSize: [width, height],
-    iconAnchor: [width / 2, height / 2],
-    popupAnchor: [0, -height / 2]
+    className: 'npc-marker',
+    html: `
+      <div style="
+        width: 4px;
+        height: 10px;
+        background-color: ${color};
+        border: 1px solid rgba(0,0,0,0.3);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        border-radius: 2px;
+        transition: all 5s linear;
+      "></div>
+    `,
+    iconSize: [4, 10],
+    iconAnchor: [2, 10],
+    popupAnchor: [0, -10]
   });
 };
 
 /**
- * Componente NPCMarkers - Renderiza NPCs no mapa Leaflet
- * 
- * Features:
- * - Retângulos coloridos que representam pessoas vistas de cima
- * - Cores diversificadas (tons de marrom, bege e bronze)
- * - Movimento suave via transições CSS
- * - Atualização via Socket.io em tempo real
+ * ✅ FASE 18.5: Componente para renderizar NPCs no mapa
  */
-export default function NPCMarkers({ countryId, npcs = [], socket = null }) {
-  const map = useMap();
-  const [visibleNPCs, setVisibleNPCs] = useState(npcs);
-  const [npcPositions, setNpcPositions] = useState(new Map());
+export default function NPCMarkers({ cityId, countryId, zoom }) {
+  const [npcs, setNPCs] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  // Inicializar posições dos NPCs
+  // ✅ Carregar NPCs apenas em zoom alto (>= 10) para performance
   useEffect(() => {
-    const positions = new Map();
-    npcs.forEach(npc => {
-      if (npc.npcId && npc.position) {
-        positions.set(npc.npcId, {
-          lat: npc.position.lat,
-          lng: npc.position.lng,
-          timestamp: Date.now()
-        });
-      }
-    });
-    setNpcPositions(positions);
-    setVisibleNPCs(npcs);
-    
-    if (npcs.length > 0) {
-      console.log(`✅ ${npcs.length} NPCs carregados no mapa`);
+    if (zoom < 10) {
+      setNPCs([]);
+      return;
     }
-  }, [npcs]);
 
-  // Escutar atualizações de posição via Socket.io
-  useEffect(() => {
-    if (!socket) return;
+    const loadNPCs = async () => {
+      try {
+        setLoading(true);
+        
+        // ✅ Usar porta dinâmica do backend
+        const apiUrl = await getApiUrl();
+        let url = `${apiUrl}/npcs`;
+        const params = new URLSearchParams();
+        
+        if (cityId) {
+          params.append('cityId', cityId);
+        } else if (countryId) {
+          params.append('countryId', countryId);
+        }
+        
+        if (params.toString()) {
+          url += `?${params.toString()}`;
+        }
 
-    const handleNPCUpdate = (data) => {
-      // Atualizar posição de um NPC específico
-      if (data.npcId && data.position) {
-        setNpcPositions(prev => {
-          const newPositions = new Map(prev);
-          newPositions.set(data.npcId, {
-            lat: data.position.lat,
-            lng: data.position.lng,
-            timestamp: Date.now()
-          });
-          return newPositions;
-        });
-
-        // Atualizar NPC na lista
-        setVisibleNPCs(prev => prev.map(npc => 
-          npc.npcId === data.npcId
-            ? { ...npc, position: data.position, status: data.status || npc.status }
-            : npc
-        ));
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          setNPCs(data.npcs || []);
+        } else {
+          // ✅ FASE 19.1: Fallback - retornar array vazio se API falhar
+          console.warn(`⚠️ API de NPCs retornou status ${response.status}, usando fallback []`);
+          setNPCs([]);
+        }
+      } catch (error) {
+        // ✅ FASE 19.1: Fallback - retornar array vazio se fetch falhar
+        console.warn('Erro ao carregar NPCs, usando fallback []:', error.message);
+        setNPCs([]);
+      } finally {
+        setLoading(false);
       }
     };
 
-    const handleNPCsBatchUpdate = (data) => {
-      // Atualizar múltiplos NPCs de uma vez
-      if (data.npcs && Array.isArray(data.npcs)) {
-        setNpcPositions(prev => {
-          const newPositions = new Map(prev);
-          data.npcs.forEach(npc => {
-            if (npc.npcId && npc.position) {
-              newPositions.set(npc.npcId, {
-                lat: npc.position.lat,
-                lng: npc.position.lng,
-                timestamp: Date.now()
-              });
-            }
-          });
-          return newPositions;
-        });
+    loadNPCs();
 
-        setVisibleNPCs(prev => {
-          const npcMap = new Map(prev.map(n => [n.npcId, n]));
-          data.npcs.forEach(updatedNPC => {
-            if (updatedNPC.npcId) {
-              npcMap.set(updatedNPC.npcId, {
-                ...npcMap.get(updatedNPC.npcId),
-                ...updatedNPC
-              });
-            }
-          });
-          return Array.from(npcMap.values());
-        });
-      }
-    };
-
-    // Registrar listeners
-    socket.on('npc:position-updated', handleNPCUpdate);
-    socket.on('npc:batch-updated', handleNPCsBatchUpdate);
-
-    // Cleanup
-    return () => {
-      socket.off('npc:position-updated', handleNPCUpdate);
-      socket.off('npc:batch-updated', handleNPCsBatchUpdate);
-    };
-  }, [socket]);
-
-  // Atualizar posições periodicamente (fallback se Socket.io não funcionar)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setVisibleNPCs(prev => [...prev]);
-    }, 5000); // Atualizar a cada 5 segundos
-
+    // ✅ Atualizar NPCs a cada 5 segundos para movimento suave
+    const interval = setInterval(loadNPCs, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [cityId, countryId, zoom]);
 
-  // Renderizar sempre que houver NPCs, mesmo sem countryId
-  if (visibleNPCs.length === 0) {
-    return null;
-  }
-
-  // Obter posição atualizada do NPC (com transição suave)
-  const getNPCPosition = (npc) => {
-    if (!npc.npcId) return [npc.position?.lat || 0, npc.position?.lng || 0];
-    
-    const cached = npcPositions.get(npc.npcId);
-    if (cached) {
-      return [cached.lat, cached.lng];
-    }
-    
-    return [npc.position?.lat || 0, npc.position?.lng || 0];
-  };
-
-  if (visibleNPCs.length === 0) {
+  if (zoom < 10 || loading || npcs.length === 0) {
     return null;
   }
 
   return (
     <>
-      {visibleNPCs.map((npc) => {
-        const position = getNPCPosition(npc);
-        const npcId = npc.npcId || npc._id;
-        const skinColor = npc.skinColor || null;
-        const currentTask = npc.currentTask || npc.status || 'idle';
-        
+      {npcs.map((npc) => {
+        if (!npc.position || !npc.position.lat || !npc.position.lng) {
+          return null;
+        }
+
+        const icon = createNPCIcon(npc.routineState || 'resting');
+
         return (
           <Marker
-            key={npcId}
-            position={position}
-            icon={createNPCIcon(npcId, currentTask, skinColor)}
-            // Adicionar transição suave usando Leaflet's setLatLng
-            eventHandlers={{
-              // Usar CSS transitions para movimento suave
-            }}
+            key={npc.npcId || npc.id}
+            position={[npc.position.lat, npc.position.lng]}
+            icon={icon}
           >
             <Popup>
-              <div className="text-sm">
-                <div className="font-bold mb-1 text-gray-800">{npc.name || 'NPC'}</div>
-                <div className="text-xs text-gray-600 mb-1">
-                  Status: <span className="font-medium capitalize">{npc.status || 'idle'}</span>
+              <div style={{ minWidth: '150px' }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 'bold' }}>
+                  {npc.name || 'NPC'}
+                </h3>
+                <div style={{ fontSize: '12px', color: '#666' }}>
+                  <div><strong>Estado:</strong> {npc.routineState || 'resting'}</div>
+                  <div><strong>Cidade:</strong> {npc.cityName || 'Desconhecida'}</div>
+                  <div><strong>Hora Virtual:</strong> {npc.virtualHour || 8}h</div>
+                  {npc.status && <div><strong>Status:</strong> {npc.status}</div>}
                 </div>
-                <div className="text-xs text-gray-600 mb-1">
-                  Tipo: <span className="font-medium capitalize">{npc.npcType || 'resident'}</span>
-                </div>
-                {npc.targetPosition && (
-                  <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-300">
-                    🎯 Indo para: {npc.targetPosition.lat.toFixed(4)}, {npc.targetPosition.lng.toFixed(4)}
-                  </div>
-                )}
-                {npc.homeBuilding && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    🏠 Casa: {npc.homeBuilding.name || 'Edifício'}
-                  </div>
-                )}
-                {npc.workBuilding && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    🏢 Trabalho: {npc.workBuilding.name || 'Edifício'}
-                  </div>
-                )}
               </div>
             </Popup>
           </Marker>

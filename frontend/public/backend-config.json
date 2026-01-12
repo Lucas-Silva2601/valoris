@@ -1,0 +1,6 @@
+{
+  "port": 3001,
+  "apiUrl": "http://localhost:3001/api",
+  "socketUrl": "http://localhost:3001",
+  "timestamp": "2026-01-12T20:38:38.582Z"
+}

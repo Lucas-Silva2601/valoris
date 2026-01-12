@@ -1,5 +1,6 @@
 import express from 'express';
 import * as adminController from '../controllers/adminController.js';
+import * as debugController from '../controllers/debugController.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/auth.js';
 
@@ -67,6 +68,12 @@ router.post('/wallet/add-balance', adminOrTestMode, adminController.addWalletBal
  * Lista todos os usuários (com saldo)
  */
 router.get('/users', adminOrTestMode, adminController.listUsers);
+
+/**
+ * ✅ FASE 19.4: GET /api/admin/debug
+ * Retorna métricas de debug do sistema (NPCs, memória, banco, Socket.io, erros)
+ */
+router.get('/debug', adminOrTestMode, debugController.getDebugInfo);
 
 export default router;
 

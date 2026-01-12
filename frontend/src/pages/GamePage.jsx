@@ -8,15 +8,20 @@ import NotificationCenter from '../components/NotificationCenter';
 import ErrorBoundary from '../components/ErrorBoundary';
 import InvestmentModal from '../components/InvestmentModal';
 import BuildingModal from '../components/BuildingModal';
+import BreadcrumbNavigation from '../components/BreadcrumbNavigation';
+import EventLog from '../components/EventLog';
 import { useRealtimeUpdates } from '../hooks/useRealtimeUpdates';
 import { useToast } from '../hooks/useToast';
 import { useSocket } from '../hooks/useSocket';
-import { getCountryId, getCountryName, isValidCountryId } from '../utils/countryUtils';
-import { identifyCountryFromMapClick } from '../utils/mapClickUtils';
+import { getCountryId, getCountryName } from '../utils/countryUtils';
+import { identifyCountryFromMapClick, identifyHierarchyFromMapClickImmediate } from '../utils/mapClickUtils';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
-import { API_BASE_URL, apiRequest } from '../config/api';
+import { getApiUrl, isConfigLoaded, initializeConfig } from '../config/api';
 
 export default function GamePage() {
+  // ✅ NOVO: Estado para controlar quando a configuração está pronta
+  const [isConfigReady, setIsConfigReady] = useState(false);
+  
   const [countriesData, setCountriesData] = useState(null);
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [selectedCountryData, setSelectedCountryData] = useState(null);
@@ -26,31 +31,45 @@ export default function GamePage() {
   const [investmentModalOpen, setInvestmentModalOpen] = useState(false);
   const [investmentCountry, setInvestmentCountry] = useState(null);
   const [buildings, setBuildings] = useState([]);
-  const [npcs, setNPCs] = useState([]);
   const [buildingModalOpen, setBuildingModalOpen] = useState(false);
   const [buildingPosition, setBuildingPosition] = useState(null);
+  const [locationHierarchy, setLocationHierarchy] = useState({
+    world: { id: 'world', name: 'Mundo' },
+    country: null,
+    state: null,
+    city: null,
+  });
 
-  // Hook de atualizações em tempo real
   const realtimeUpdates = useRealtimeUpdates(selectedCountry);
-  const { toasts, removeToast, showSuccess, showError } = useToast();
-  const { socket, isConnected } = useSocket();
+  const { toasts, removeToast, showSuccess } = useToast();
+  const { socket } = useSocket();
+  
+  // ✅ CORREÇÃO CRÍTICA: Aguardar configuração estar pronta antes de renderizar
+  useEffect(() => {
+    const initConfig = async () => {
+      console.log('🚀 GamePage: Aguardando configuração da API...');
+      try {
+        await initializeConfig();
+        console.log('✅ GamePage: Configuração pronta!');
+        setIsConfigReady(true);
+      } catch (err) {
+        console.error('❌ GamePage: Erro ao inicializar configuração:', err);
+        // Mesmo com erro, permitir renderização (usará fallback)
+        setIsConfigReady(true);
+      }
+    };
+    
+    initConfig();
+  }, []);
 
   // Carregar unidades do usuário
   useEffect(() => {
     loadUserUnits();
   }, []);
 
-  // Estado para controlar se o backend está disponível
   const [backendAvailable, setBackendAvailable] = useState(true);
 
-  // Carregar TODOS os NPCs (não apenas do país selecionado)
-  useEffect(() => {
-    if (backendAvailable) {
-      loadAllNPCs();
-    }
-  }, [backendAvailable]);
-
-  // ✅ Carregar edifícios quando backend fica disponível e periodicamente
+  // Carregar edifícios quando backend fica disponível e periodicamente
   useEffect(() => {
     if (backendAvailable) {
       loadBuildings();
@@ -59,7 +78,7 @@ export default function GamePage() {
     }
   }, [backendAvailable]);
   
-  // ✅ Recarregar edifícios periodicamente para manter atualizado (apenas se backend estiver disponível)
+  // Recarregar edifícios periodicamente
   useEffect(() => {
     if (!backendAvailable) return;
     
@@ -70,26 +89,15 @@ export default function GamePage() {
     return () => clearInterval(interval);
   }, [backendAvailable]);
 
-  // Recarregar NPCs periodicamente para ver movimento (apenas se backend estiver disponível)
-  useEffect(() => {
-    if (!backendAvailable) return;
-    
-    const interval = setInterval(() => {
-      loadAllNPCs();
-    }, 5000); // Recarregar a cada 5 segundos (reduzido para evitar spam)
 
-    return () => clearInterval(interval);
-  }, [backendAvailable]);
-
-  // ✅ Escutar edifícios criados via Socket.io para aparecer imediatamente no mapa
+  // Escutar edifícios criados via Socket.io
   useEffect(() => {
     if (!socket) return;
 
     const handleBuildingCreated = (data) => {
       if (data.building) {
-        // ✅ Adicionar edifício à lista imediatamente
         setBuildings(prev => {
-          // ✅ Evitar duplicatas - verificar por buildingId, building_id ou id
+          // Evitar duplicatas
           const buildingId = data.building.buildingId || data.building.building_id || data.building.id;
           const exists = prev.some(b => {
             const bId = b.buildingId || b.building_id || b.id;
@@ -108,7 +116,7 @@ export default function GamePage() {
             });
           }
           
-          // ✅ Validar posição antes de adicionar
+          // Validar posição antes de adicionar
           const position = data.building.position || { 
             lat: data.building.position_lat, 
             lng: data.building.position_lng 
@@ -135,7 +143,7 @@ export default function GamePage() {
         console.log('🏗️ Novo edifício criado via Socket.io:', data.building);
         showSuccess(`✅ Edifício ${data.building.type || 'construído'} construído em ${data.building.countryName || 'país selecionado'}!`);
         
-        // ✅ Recarregar lista após um pequeno delay para garantir que está sincronizado
+        // Recarregar lista após delay para sincronização
         setTimeout(() => {
           loadBuildings();
         }, 1000);
@@ -183,12 +191,9 @@ export default function GamePage() {
   };
 
   const loadBuildings = async () => {
-    // ✅ IMPORTANTE: Sempre carregar TODOS os edifícios do usuário para mostrar no mapa
-    // Não apenas do país selecionado, pois o mapa mostra todos os edifícios
+    // Sempre carregar todos os edifícios do usuário para mostrar no mapa
     try {
       const userId = localStorage.getItem('userId') || 'test-user-id';
-      
-      // ✅ Sempre carregar todos os edifícios do usuário
       const response = await fetch(`${API_BASE_URL}/buildings/user/${userId}`, {
         headers: {
           'user-id': userId
@@ -199,7 +204,7 @@ export default function GamePage() {
         const data = await response.json();
         const buildingsList = data.buildings || data || [];
         
-        // ✅ Validar e filtrar edifícios com posição válida
+        // Validar e filtrar edifícios com posição válida
         const validBuildings = buildingsList.filter(building => {
           const hasPosition = building.position || (building.position_lat && building.position_lng);
           if (!hasPosition) {
@@ -230,101 +235,66 @@ export default function GamePage() {
           })));
         }
       } else {
-        console.warn('Erro ao carregar edifícios:', response.status);
+        // ✅ FASE 19.1: Fallback - retornar array vazio se API falhar
+        console.warn('API de edifícios retornou erro, usando fallback []');
         setBuildings([]);
       }
     } catch (error) {
-      console.error('Erro ao carregar edifícios:', error);
+      // ✅ FASE 19.1: Fallback - retornar array vazio se fetch falhar
+      console.warn('Erro ao carregar edifícios, usando fallback []:', error.message);
       setBuildings([]);
     }
   };
 
-  // Carregar TODOS os NPCs do mapa
-  const loadAllNPCs = async () => {
-    try {
-      const response = await fetchWithTimeout(`${API_BASE_URL}/npcs/all`, {}, 3000);
-      
-      if (response.ok) {
-        const data = await response.json();
-        const npcsList = data.npcs || [];
-        setNPCs(npcsList);
-        setBackendAvailable(true); // Backend está disponível
-        
-        // Log apenas se houver NPCs
-        if (npcsList.length > 0) {
-          console.log(`✅ ${npcsList.length} NPCs no mapa`);
-        }
-      } else {
-        setBackendAvailable(false);
-        setNPCs([]);
-      }
-    } catch (error) {
-      // Silenciar erros de conexão após a primeira tentativa
-      if (!window._backendWarningShown) {
-        console.warn('⚠️ Backend não está rodando. Inicie: cd backend && npm start');
-        window._backendWarningShown = true;
-      }
-      setBackendAvailable(false);
-      setNPCs([]);
-    }
-  };
 
-  // Função para criar NPCs iniciais automaticamente se necessário
-  const createInitialNPCs = async (countryId, countryName) => {
-    try {
-      const token = localStorage.getItem('token');
-      
-      // Chamar endpoint do backend para criar NPCs iniciais
-      const response = await fetch(`${API_BASE_URL}/npcs/create-initial`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          countryId,
-          countryName,
-          count: 5 // Criar 5 NPCs iniciais
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ Criados ${data.created || 0} NPCs iniciais para ${countryName}`);
-      } else {
-        console.log('⚠️ Não foi possível criar NPCs automaticamente. Construa edifícios para gerar NPCs!');
-      }
-    } catch (error) {
-      console.error('Erro ao criar NPCs:', error);
-    }
-  };
-
-  // Carregar dados GeoJSON dos países
+  // 🚨 CORREÇÃO: Aguardar configuração do backend antes de carregar
   useEffect(() => {
     const loadCountriesData = async () => {
       try {
+        console.log('🗺️  GamePage: Iniciando carregamento de países...');
+        
+        // ✅ Aguardar configuração do backend
+        const apiUrl = await getApiUrl();
+        console.log('📡 API URL:', `${apiUrl}/countries/geojson`);
+        
         setLoading(true);
-        const response = await fetch(`${API_BASE_URL}/countries/geojson`);
+        const response = await fetch(`${apiUrl}/countries/geojson`);
         
         if (!response.ok) {
-          throw new Error('Erro ao carregar dados dos países');
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
-          // Se não for JSON, pode ser que o backend não esteja rodando
-          throw new Error('Backend não está respondendo. Verifique se o servidor está rodando na porta 3001.');
+          throw new Error('Backend não está respondendo JSON');
         }
         
         const data = await response.json();
+        console.log(`✅ Países carregados: ${data.features?.length || 0} features`);
         setCountriesData(data);
         setError(null);
+        setBackendAvailable(true);
       } catch (err) {
-        console.error('Erro ao carregar países:', err);
-        setError(err.message || 'Erro ao carregar mapa');
-        // Fallback: tentar carregar dados locais se disponíveis
+        // ✅ FALLBACK RESILIENTE: Mapa vazio mas funcional
+        console.error('❌ Erro ao carregar países:', err.message);
+        console.warn('⚠️  Usando fallback: mapa sem países (apenas camada base)');
+        setError(null); // Não mostrar erro visual, apenas log
+        setBackendAvailable(false);
+        
+        // Fallback: GeoJSON vazio mas válido
+        setCountriesData({
+          type: 'FeatureCollection',
+          features: []
+        });
+        
+        // Tentar reconectar após 5 segundos
+        setTimeout(() => {
+          console.log('🔄 Tentando reconectar backend...');
+          loadCountriesData();
+        }, 5000);
       } finally {
         setLoading(false);
+        console.log('✅ GamePage: Carregamento finalizado');
       }
     };
 
@@ -332,14 +302,11 @@ export default function GamePage() {
   }, []);
 
   const handleCountryClick = (feature, countryId) => {
-    // ✅ Garantir que sempre obtenhamos um ID válido do país
     const extractedCountryId = getCountryId(feature);
     const extractedCountryName = getCountryName(feature);
-    
-    // ✅ Usar ID extraído ou o passado como parâmetro
     let validCountryId = extractedCountryId || countryId;
     
-    // ✅ Se ainda não tiver ID válido, gerar um baseado no nome (NUNCA deixar como 'UNK')
+    // Gerar ID baseado no nome se necessário
     if (!validCountryId || validCountryId === 'UNK' || validCountryId === 'XXX') {
       if (extractedCountryName && extractedCountryName !== 'País Desconhecido') {
         // Gerar ID a partir do nome se não tiver código ISO
@@ -374,7 +341,6 @@ export default function GamePage() {
       }
     }
 
-    // ✅ Log para debug
     console.log('🌍 País clicado:', {
       extractedId: extractedCountryId,
       passedId: countryId,
@@ -391,11 +357,15 @@ export default function GamePage() {
       properties: feature?.properties || {},
       geometry: feature?.geometry || null
     });
+    // Atualizar hierarquia de localização
+    setLocationHierarchy(prev => ({
+      ...prev,
+      country: { id: validCountryId, name: extractedCountryName, feature: feature },
+      state: null,
+      city: null,
+    }));
   };
 
-  const handleCountryHover = (feature, countryId) => {
-    // Pode adicionar lógica de hover aqui
-  };
 
   // Handler para quando clicar na bolinha de investimento
   const handleInvestmentClick = (feature, countryId) => {
@@ -448,9 +418,6 @@ export default function GamePage() {
     );
   }
 
-  const handleCountrySelect = (feature, countryId) => {
-    handleCountryClick(feature, countryId);
-  };
 
   return (
     <ErrorBoundary>
@@ -461,25 +428,62 @@ export default function GamePage() {
           <div className="absolute top-4 left-4 z-[1000] w-80">
             <CountrySearch
               countriesData={countriesData}
-              onCountrySelect={handleCountrySelect}
+              onCountrySelect={handleCountryClick}
             />
           </div>
 
-          <WorldMap
-            countriesData={countriesData}
-            selectedCountry={selectedCountry}
-            selectedCountryFeature={selectedCountryData}
-            onCountryClick={handleCountryClick}
-            onCountryHover={handleCountryHover}
-            onInvestmentClick={handleInvestmentClick}
-            units={userUnits}
-            unitPositions={realtimeUpdates.unitPositions}
-            buildings={buildings}
-            npcs={npcs}
-            socket={socket}
-            onMapClick={(e) => {
-              // ✅ Verificar se já há um modal de construção aberto (do CountryPanel)
-              // Se sim, apenas atualizar a posição sem abrir novo modal
+          {/* Breadcrumbs de Localização */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000]">
+            <BreadcrumbNavigation
+              hierarchy={locationHierarchy}
+              onBreadcrumbClick={(level, id) => {
+                if (level === 'world') {
+                  setSelectedCountry(null);
+                  setSelectedCountryData(null);
+                  setLocationHierarchy({
+                    world: { id: 'world', name: 'Mundo' },
+                    country: null,
+                    state: null,
+                    city: null,
+                  });
+                } else if (level === 'country' && locationHierarchy.country?.id === id) {
+                  // Já está no país, não faz nada ou reseta estado/cidade
+                  setLocationHierarchy(prev => ({
+                    ...prev,
+                    state: null,
+                    city: null,
+                  }));
+                } else if (level === 'country') {
+                  // Lógica para selecionar país (pode ser necessário buscar feature)
+                  const countryFeature = countriesData?.features?.find(f => getCountryId(f) === id);
+                  if (countryFeature) {
+                    handleCountryClick(countryFeature, id);
+                  }
+                }
+              }}
+            />
+          </div>
+
+          <ErrorBoundary 
+            message="Erro ao carregar o mapa. O componente será reiniciado automaticamente."
+            autoReset={true}
+            autoResetDelay={3000}
+            showReload={false}
+          >
+            <WorldMap
+              countriesData={countriesData}
+              selectedCountry={selectedCountry}
+              selectedCountryFeature={selectedCountryData}
+              onCountryClick={handleCountryClick}
+              onInvestmentClick={handleInvestmentClick}
+              units={userUnits}
+              unitPositions={realtimeUpdates.unitPositions}
+              buildings={buildings}
+              socket={socket}
+              selectedStateId={locationHierarchy?.state?.id}
+              selectedCityId={locationHierarchy?.city?.id}
+            onMapClick={async (e) => {
+              // Verificar se já há um modal de construção aberto
               if (buildingModalOpen && selectedCountry && selectedCountryData) {
                 // Modal já está aberto, apenas atualizar a posição
                 const clickedPosition = {
@@ -492,13 +496,12 @@ export default function GamePage() {
                 return; // Não abrir novo modal
               }
               
-              // ✅ Se não há modal aberto, identificar país e abrir novo modal
               const clickedPosition = {
                 lat: e.latlng.lat,
                 lng: e.latlng.lng
               };
               
-              // ✅ Identificar país usando o GeoJSON carregado (OBRIGATÓRIO)
+              // Identificar país usando o GeoJSON carregado
               if (!countriesData || !countriesData.features) {
                 console.error('❌ GeoJSON não carregado ainda. Aguarde o carregamento do mapa.');
                 alert('⚠️ Mapa ainda está carregando. Aguarde alguns segundos e tente novamente.');
@@ -515,7 +518,7 @@ export default function GamePage() {
                 feature: countryInfo.feature
               });
               
-              // ✅ VALIDAÇÃO: Só abrir modal se país foi identificado
+              // Só abrir modal se país foi identificado
               if (!countryInfo.valid || !countryInfo.countryId || countryInfo.countryId === 'UNK' || countryInfo.countryId === 'XXX') {
                 console.warn('⚠️  País não identificado no clique:', {
                   coordenadas: clickedPosition,
@@ -526,7 +529,55 @@ export default function GamePage() {
                 return; // Não abrir modal se país não foi identificado
               }
               
-              // ✅ Definir posição e país ANTES de abrir modal
+              // Tentar identificar hierarquia completa (país, estado, cidade)
+              try {
+                const hierarchyInfo = await identifyHierarchyFromMapClickImmediate(e.latlng);
+                if (hierarchyInfo.valid) {
+                  setLocationHierarchy({
+                    world: { id: 'world', name: 'Mundo' },
+                    country: hierarchyInfo.country ? {
+                      id: hierarchyInfo.country.id,
+                      name: hierarchyInfo.country.name,
+                      feature: countryInfo.feature
+                    } : null,
+                    state: hierarchyInfo.state ? {
+                      id: hierarchyInfo.state.id,
+                      name: hierarchyInfo.state.name
+                    } : null,
+                    city: hierarchyInfo.city ? {
+                      id: hierarchyInfo.city.id,
+                      name: hierarchyInfo.city.name
+                    } : null,
+                  });
+                } else {
+                  // Se não conseguir identificar hierarquia, pelo menos definir o país
+                  setLocationHierarchy(prev => ({
+                    ...prev,
+                    country: {
+                      id: countryInfo.countryId,
+                      name: countryInfo.countryName || 'País Selecionado',
+                      feature: countryInfo.feature
+                    },
+                    state: null,
+                    city: null,
+                  }));
+                }
+              } catch (hierarchyError) {
+                console.warn('⚠️ Erro ao identificar hierarquia completa:', hierarchyError);
+                // Continuar mesmo se falhar a identificação da hierarquia
+                setLocationHierarchy(prev => ({
+                  ...prev,
+                  country: {
+                    id: countryInfo.countryId,
+                    name: countryInfo.countryName || 'País Selecionado',
+                    feature: countryInfo.feature
+                  },
+                  state: null,
+                  city: null,
+                }));
+              }
+              
+              // Definir posição e país antes de abrir modal
               setBuildingPosition(clickedPosition);
               setSelectedCountry(countryInfo.countryId);
               setSelectedCountryData({
@@ -545,16 +596,24 @@ export default function GamePage() {
               setBuildingModalOpen(true);
             }}
           />
+          </ErrorBoundary>
         </div>
 
         {/* Painel lateral */}
-        <CountryPanel
-          country={selectedCountryData}
-          onClose={() => {
-            setSelectedCountry(null);
-            setSelectedCountryData(null);
-          }}
-        />
+        <ErrorBoundary
+          message="Erro ao carregar o painel lateral. O componente será reiniciado automaticamente."
+          autoReset={true}
+          autoResetDelay={3000}
+          showReload={false}
+        >
+          <CountryPanel
+            country={selectedCountryData}
+            onClose={() => {
+              setSelectedCountry(null);
+              setSelectedCountryData(null);
+            }}
+          />
+        </ErrorBoundary>
 
         {/* Status de conexão em tempo real */}
         <RealtimeStatus />
@@ -588,31 +647,23 @@ export default function GamePage() {
             countryId={selectedCountry || 'UNK'}
             countryName={selectedCountryData?.name || 'Local Selecionado'}
             position={buildingPosition} // Pode ser null, será calculado automaticamente se necessário
-            countryGeometry={selectedCountryData?.geometry} // ✅ Passar geometria para calcular centroide
+            countryGeometry={selectedCountryData?.geometry}
+            cityId={locationHierarchy?.city?.id || null}
             onBuild={(building) => {
-              // ✅ Recarregar TODOS os edifícios após construir (não apenas do país selecionado)
               console.log('🏗️ Edifício construído, recarregando lista...', building);
-              
-              // Recarregar imediatamente
               loadBuildings();
-              
-              // Recarregar novamente após um delay para garantir que apareceu
               setTimeout(() => {
                 loadBuildings();
-                console.log('🔄 Recarregando edifícios após construção...');
               }, 1500);
-              
-              // Recarregar todos os NPCs para ver os construtores
-              setTimeout(() => {
-                loadAllNPCs();
-              }, 1000);
-              
               setBuildingModalOpen(false);
               setBuildingPosition(null);
               showSuccess(`✅ Edifício construído! O dinheiro foi deduzido da sua carteira. 10 NPCs construtores foram enviados.`);
             }}
           />
         )}
+
+        {/* ✅ FASE 19.4: Log de Eventos (apenas em desenvolvimento) */}
+        <EventLog />
       </div>
     </ErrorBoundary>
   );

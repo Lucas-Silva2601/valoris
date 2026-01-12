@@ -1,6 +1,5 @@
-import CountryOwnership from '../models/CountryOwnership.js';
-import Wallet from '../models/Wallet.js';
-import Transaction from '../models/Transaction.js';
+import countryOwnershipRepository from '../repositories/countryOwnershipRepository.js';
+import walletRepository from '../repositories/walletRepository.js';
 import { subtractBalance } from './walletService.js';
 import { emitOwnershipUpdate } from '../socket/socketHandler.js';
 import { calculateInvestmentPrice, getCountryEconomicData } from '../data/countryEconomicData.js';
@@ -9,21 +8,21 @@ import { calculateInvestmentPrice, getCountryEconomicData } from '../data/countr
  * Obter ou criar propriedade de país
  */
 export const getOrCreateCountryOwnership = async (countryId, countryName) => {
-  let ownership = await CountryOwnership.findOne({ countryId });
+  let ownership = await countryOwnershipRepository.findByCountryId(countryId);
   
   if (!ownership) {
     // Calcular preço baseado na economia real do país
     const basePrice = 1000;
     const economicPrice = calculateInvestmentPrice(countryId, basePrice);
     
-    ownership = new CountryOwnership({
+    ownership = await countryOwnershipRepository.create({
       countryId,
       countryName,
       totalShares: 100,
+      availableShares: 100,
       currentSharePrice: economicPrice, // Preço baseado na economia real
-      shareholders: []
+      totalInvested: 0
     });
-    await ownership.save();
   }
   
   return ownership;
@@ -37,16 +36,16 @@ export const buyShares = async (userId, countryId, countryName, shares, sharePri
   const totalCost = shares * sharePrice;
   
   // Verificar se há ações disponíveis
-  const availableShares = ownership.totalShares - 
-    ownership.shareholders.reduce((sum, sh) => sum + sh.shares, 0);
+  const soldShares = await countryOwnershipRepository.getSoldShares(countryId);
+  const availableShares = ownership.totalShares - soldShares;
   
   if (shares > availableShares) {
-    throw new Error(`Apenas ${availableShares}% de ações disponíveis`);
+    throw new Error(`Apenas ${availableShares.toFixed(1)}% de ações disponíveis`);
   }
   
   // Verificar saldo
-  const wallet = await Wallet.findOne({ userId });
-  if (!wallet || wallet.balance < totalCost) {
+  const wallet = await walletRepository.findByUserId(userId);
+  if (!wallet || parseFloat(wallet.balance) < totalCost) {
     throw new Error('Saldo insuficiente');
   }
   
@@ -59,28 +58,23 @@ export const buyShares = async (userId, countryId, countryName, shares, sharePri
   );
   
   // Adicionar ou atualizar acionista
-  const existingShareholder = ownership.shareholders.find(
-    sh => sh.userId.toString() === userId.toString()
+  await countryOwnershipRepository.upsertShareholder(
+    countryId,
+    userId,
+    shares,
+    sharePrice
   );
   
-  if (existingShareholder) {
-    existingShareholder.shares += shares;
-    existingShareholder.purchasePrice = 
-      (existingShareholder.purchasePrice * (existingShareholder.shares - shares) + totalCost) / 
-      existingShareholder.shares;
-  } else {
-    ownership.shareholders.push({
-      userId,
-      shares,
-      purchasePrice: sharePrice,
-      purchasedAt: new Date()
-    });
-  }
+  // Atualizar total investido e preço das ações
+  const newTotalInvested = parseFloat(ownership.totalInvested || 0) + totalCost;
+  const newSoldShares = await countryOwnershipRepository.getSoldShares(countryId);
+  const newPrice = await calculateNewSharePrice(newTotalInvested, newSoldShares);
   
-  ownership.totalInvested += totalCost;
-  ownership.currentSharePrice = await calculateNewSharePrice(ownership);
-  
-  await ownership.save();
+  await countryOwnershipRepository.updateSharePriceAndAvailability(
+    countryId,
+    newPrice,
+    newTotalInvested
+  );
   
   // Emitir atualização via Socket.io
   const ownershipInfo = await getCountryOwnershipInfo(countryId);
@@ -96,7 +90,7 @@ export const buyShares = async (userId, countryId, countryName, shares, sharePri
         amount: totalCost,
         shares,
         countryName: ownership.countryName,
-        sharePrice: ownership.currentSharePrice
+        sharePrice: newPrice
       }
     });
   } catch (error) {
@@ -104,44 +98,44 @@ export const buyShares = async (userId, countryId, countryName, shares, sharePri
     console.warn('Erro ao registrar evento de analytics:', error);
   }
   
-  return ownership;
+  // Retornar ownership atualizado
+  return await countryOwnershipRepository.findByCountryId(countryId);
 };
 
 /**
  * Calcular novo preço das ações baseado na demanda
  */
-const calculateNewSharePrice = async (ownership) => {
+const calculateNewSharePrice = async (totalInvested, sharesSold) => {
   const { getMinimumSharePrice } = await import('../utils/businessRules.js');
-  const sharesSold = ownership.shareholders.reduce((sum, sh) => sum + sh.shares, 0);
-  return getMinimumSharePrice(ownership.totalInvested, sharesSold);
+  return getMinimumSharePrice(totalInvested, sharesSold);
 };
 
 /**
  * Obter acionistas de um país
  */
 export const getShareholders = async (countryId) => {
-  const ownership = await CountryOwnership.findOne({ countryId })
-    .populate('shareholders.userId', 'username email');
+  const shareholders = await countryOwnershipRepository.getShareholders(countryId);
   
-  if (!ownership) {
+  if (!shareholders || shareholders.length === 0) {
     return [];
   }
   
-  return ownership.shareholders.sort((a, b) => b.shares - a.shares);
+  return shareholders.sort((a, b) => b.shares - a.shares);
 };
 
 /**
  * Calcular poder de decisão por investimento
  */
 export const calculateVotingPower = async (countryId, userId) => {
-  const ownership = await CountryOwnership.findOne({ countryId });
+  const ownership = await countryOwnershipRepository.findByCountryId(countryId);
   
   if (!ownership) {
     return 0;
   }
   
-  const shareholder = ownership.shareholders.find(
-    sh => sh.userId.toString() === userId.toString()
+  const shareholders = await countryOwnershipRepository.getShareholders(countryId);
+  const shareholder = shareholders.find(
+    sh => sh.userId === userId || (sh.user && sh.user.id === userId)
   );
   
   if (!shareholder) {
@@ -149,22 +143,22 @@ export const calculateVotingPower = async (countryId, userId) => {
   }
   
   // Poder de decisão = porcentagem de ações possuídas
-  const totalShares = ownership.shareholders.reduce((sum, sh) => sum + sh.shares, 0);
-  return totalShares > 0 ? (shareholder.shares / totalShares) * 100 : 0;
+  const totalShares = shareholders.reduce((sum, sh) => sum + parseFloat(sh.shares || 0), 0);
+  return totalShares > 0 ? (parseFloat(shareholder.shares) / totalShares) * 100 : 0;
 };
 
 /**
  * Obter informações de propriedade de um país
  */
 export const getCountryOwnershipInfo = async (countryId) => {
-  const ownership = await CountryOwnership.findOne({ countryId })
-    .populate('shareholders.userId', 'username email');
+  const ownership = await countryOwnershipRepository.findByCountryId(countryId);
   
   if (!ownership) {
     return null;
   }
   
-  const totalSharesSold = ownership.shareholders.reduce((sum, sh) => sum + sh.shares, 0);
+  const shareholders = await countryOwnershipRepository.getShareholders(countryId);
+  const totalSharesSold = shareholders.reduce((sum, sh) => sum + parseFloat(sh.shares || 0), 0);
   const availableShares = ownership.totalShares - totalSharesSold;
   
   return {
@@ -175,13 +169,13 @@ export const getCountryOwnershipInfo = async (countryId) => {
     sharesSold: totalSharesSold,
     availableShares: availableShares,
     totalInvested: ownership.totalInvested,
-    shareholders: ownership.shareholders.map(sh => ({
-      userId: sh.userId,
-      shares: sh.shares,
-      percentage: (sh.shares / ownership.totalShares) * 100,
-      purchasePrice: sh.purchasePrice,
+    shareholders: shareholders.map(sh => ({
+      userId: sh.userId || (sh.user ? sh.user.id : null),
+      user: sh.user,
+      shares: parseFloat(sh.shares || 0),
+      percentage: (parseFloat(sh.shares || 0) / ownership.totalShares) * 100,
+      purchasePrice: parseFloat(sh.purchasePrice || 0),
       purchasedAt: sh.purchasedAt
     }))
   };
 };
-

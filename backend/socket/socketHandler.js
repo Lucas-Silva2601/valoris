@@ -88,12 +88,40 @@ export const setupSocketHandlers = (io) => {
       }
     });
 
+    // ✅ FASE 19.2: Handler para atualizar viewport bounds do cliente
+    socket.on('viewport:update', async (bounds) => {
+      try {
+        const { updateSocketViewport } = await import('./npcUpdateHandler.js');
+        updateSocketViewport(socket.id, bounds);
+      } catch (error) {
+        console.error('Erro ao atualizar viewport:', error);
+      }
+    });
+    
+    socket.on('update_viewport', async (bounds) => {
+      // Compatibilidade com handler antigo
+      try {
+        const { updateSocketViewport } = await import('./npcUpdateHandler.js');
+        updateSocketViewport(socket.id, bounds);
+      } catch (error) {
+        console.error('Erro ao atualizar viewport:', error);
+      }
+    });
+
     // Desconexão
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', async (reason) => {
       console.log(`🔌 Cliente desconectado: ${socket.id} (Razão: ${reason})`);
       
       // Remover das salas
       userRooms.delete(socket.userId);
+      
+      // ✅ FASE 19.2: Limpar viewport do socket
+      try {
+        const { removeSocketViewport } = await import('./npcUpdateHandler.js');
+        removeSocketViewport(socket.id);
+      } catch (error) {
+        console.error('Erro ao limpar viewport:', error);
+      }
     });
 
     // Reconexão
@@ -272,52 +300,56 @@ export const emitEconomicHealthUpdate = (countryId, metrics) => {
 };
 
 /**
- * Emitir atualização de posição de NPC (individual)
+ * ✅ FASE 19.2: Emitir atualização de NPCs apenas para jogadores com viewport definido
+ * Filtra NPCs dentro do campo de visão (Bounding Box) do jogador
  */
-export const emitNPCPositionUpdate = (npc) => {
-  broadcast('npc:position-updated', {
-    npcId: npc.npcId,
-    position: npc.position,
-    targetPosition: npc.targetPosition,
-    status: npc.status,
-    npcType: npc.npcType,
-    timestamp: new Date().toISOString()
-  });
-};
+export const emitNPCUpdate = async (npcs) => {
+  if (!ioInstance) {
+    console.error('Socket.io não foi inicializado');
+    return;
+  }
 
-/**
- * Emitir atualização em lote de NPCs (múltiplos NPCs)
- */
-export const emitNPCsBatchUpdate = (npcs) => {
-  broadcast('npc:batch-updated', {
-    npcs: npcs.map(npc => ({
-      npcId: npc.npcId,
-      position: npc.position,
-      targetPosition: npc.targetPosition,
-      status: npc.status,
-      npcType: npc.npcType,
-      name: npc.name
-    })),
-    timestamp: new Date().toISOString()
-  });
-};
+  try {
+    // Obter todos os sockets conectados
+    const sockets = await ioInstance.fetchSockets();
+    
+    for (const socket of sockets) {
+      // Se o socket tem viewport definido, filtrar NPCs visíveis
+      if (socket.viewport && socket.viewport.bounds) {
+        const { bounds } = socket.viewport;
+        const { north, south, east, west } = bounds;
 
-/**
- * Emitir atualização de NPC para um país específico
- */
-export const emitNPCsForCountry = (countryId, npcs) => {
-  emitToCountry(countryId, 'npc:country-updated', {
-    countryId,
-    npcs: npcs.map(npc => ({
-      npcId: npc.npcId,
-      position: npc.position,
-      targetPosition: npc.targetPosition,
-      status: npc.status,
-      npcType: npc.npcType,
-      name: npc.name
-    })),
-    timestamp: new Date().toISOString()
-  });
+        // Filtrar NPCs dentro do viewport
+        const visibleNPCs = npcs.filter(npc => {
+          if (!npc.positionLat || !npc.positionLng) return false;
+          
+          const lat = npc.positionLat;
+          const lng = npc.positionLng;
+
+          // Verificar se está dentro do bounding box
+          return lat >= south && lat <= north && lng >= west && lng <= east;
+        });
+
+        // Enviar apenas NPCs visíveis
+        socket.emit('npc_update', {
+          npcs: visibleNPCs,
+          count: visibleNPCs.length,
+          total: npcs.length,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        // Se não tem viewport, enviar array vazio ou todos (para compatibilidade)
+        socket.emit('npc_update', {
+          npcs: [],
+          count: 0,
+          total: npcs.length,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Erro ao emitir atualização de NPCs:', error);
+  }
 };
 
 // Exportar função para obter a instância do io (para compatibilidade)

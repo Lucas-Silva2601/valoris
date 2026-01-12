@@ -7,6 +7,11 @@ import UnitMarkers from './UnitMarkers';
 import InvestmentMarkers from './InvestmentMarkers';
 import BuildingMarkers from './BuildingMarkers';
 import NPCMarkers from './NPCMarkers';
+import StateBoundaries from './StateBoundaries';
+import CityBoundaries from './CityBoundaries';
+import LotVisualization from './LotVisualization';
+import MapLegend from './MapLegend';
+import ViewportUpdater from './ViewportUpdater';
 import { getCountryId, getCountryName } from '../utils/countryUtils';
 
 // Fix para ícones padrão do Leaflet
@@ -25,7 +30,7 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // Componente para ajustar o mapa quando necessário
-function MapController({ center, zoom, selectedFeature }) {
+function MapController({ center, zoom, selectedFeature, onZoomChange, socket }) {
   const map = useMap();
   
   useEffect(() => {
@@ -51,6 +56,53 @@ function MapController({ center, zoom, selectedFeature }) {
     }
   }, [selectedFeature, map]);
 
+  // ✅ FASE 18.5: Rastrear mudanças de zoom para mostrar NPCs apenas em zoom alto
+  // ✅ FASE 19.2: Atualizar viewport no servidor para filtragem de NPCs
+  useEffect(() => {
+    const updateZoomAndViewport = () => {
+      if (onZoomChange) {
+        onZoomChange(map.getZoom());
+      }
+      
+      // ✅ FASE 19.2: Enviar viewport atual para o servidor (throttling)
+      if (socket && socket.connected) {
+        try {
+          const bounds = map.getBounds();
+          const viewport = {
+            bounds: [
+              [bounds.getSouth(), bounds.getWest()], // [south, west]
+              [bounds.getNorth(), bounds.getEast()]  // [north, east]
+            ],
+            zoom: map.getZoom(),
+            center: [map.getCenter().lat, map.getCenter().lng]
+          };
+          
+          socket.emit('update_viewport', viewport);
+        } catch (error) {
+          console.warn('Erro ao atualizar viewport:', error);
+        }
+      }
+    };
+    
+    // Throttle para evitar muitas atualizações
+    let timeoutId = null;
+    const throttledUpdate = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(updateZoomAndViewport, 500); // Atualizar a cada 500ms
+    };
+    
+    map.on('zoomend', throttledUpdate);
+    map.on('moveend', throttledUpdate);
+    // Atualizar zoom inicial
+    updateZoomAndViewport();
+    
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      map.off('zoomend', throttledUpdate);
+      map.off('moveend', throttledUpdate);
+    };
+  }, [map, onZoomChange, socket]);
+
   return null;
 }
 
@@ -75,6 +127,13 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
+// 🚨 DEBUG VISUAL
+console.log('✅ WorldMap.jsx carregado');
+
+/**
+ * ✅ WorldMap - Componente principal do mapa
+ * Renderiza Leaflet com altura 100vh garantida
+ */
 export default function WorldMap({ 
   onCountryClick, 
   onCountryHover, 
@@ -85,12 +144,13 @@ export default function WorldMap({
   unitPositions = {},
   onInvestmentClick,
   buildings = [],
-  npcs = [],
   socket = null,
-  onMapClick
+  onMapClick,
+  selectedStateId = null,
+  selectedCityId = null
 }) {
   const [mapCenter] = useState([20, 0]); // Centro do mundo
-  const [mapZoom] = useState(2);
+  const [mapZoom, setMapZoom] = useState(2);
   const [hoveredCountry, setHoveredCountry] = useState(null);
   const [mapReady, setMapReady] = useState(false);
   const geoJsonLayerRef = useRef(null);
@@ -264,6 +324,7 @@ export default function WorldMap({
         doubleClickZoom={true}
         dragging={true}
         attributionControl={true}
+        preferCanvas={true}
         whenCreated={(mapInstance) => {
           // Garantir que o mapa seja inicializado corretamente apenas uma vez
           if (!mapInitializedRef.current && !mapRef.current) {
@@ -282,6 +343,9 @@ export default function WorldMap({
           }
         }}
       >
+        {/* ✅ FASE 19.2: Componente para atualizar viewport do jogador no servidor */}
+        <ViewportUpdater />
+        
         {/* TileLayer com opacidade muito baixa para servir como fundo */}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -318,10 +382,39 @@ export default function WorldMap({
           <BuildingMarkers countryId={selectedCountry} buildings={buildings} />
         )}
 
-        {/* Marcadores de NPCs - Sempre mostrar, não apenas quando país selecionado */}
-        {npcs.length > 0 && (
-          <NPCMarkers countryId={selectedCountry} npcs={npcs} socket={socket} />
+        {/* ✅ FASE 18.5: Marcadores de NPCs - Mostrar apenas em zoom alto (>= 10) */}
+        <NPCMarkers 
+          cityId={null} 
+          countryId={selectedCountry} 
+          zoom={mapZoom}
+        />
+
+        {/* ✅ FASE 18.6: Limites de Estados - Mostrar quando zoom >= 6 */}
+        {selectedCountry && (
+          <StateBoundaries 
+            countryId={selectedCountry} 
+            zoom={mapZoom}
+          />
         )}
+
+        {/* ✅ FASE 18.6: Limites de Cidades - Mostrar quando zoom >= 10 */}
+        {selectedStateId && (
+          <CityBoundaries 
+            stateId={selectedStateId} 
+            zoom={mapZoom}
+          />
+        )}
+
+        {/* ✅ FASE 18.6: Visualização de Lotes - Mostrar quando zoom >= 12 */}
+        {selectedCityId && (
+          <LotVisualization 
+            cityId={selectedCityId} 
+            zoom={mapZoom}
+          />
+        )}
+
+        {/* ✅ FASE 18.6: Legenda do Mapa */}
+        <MapLegend zoom={mapZoom} />
 
         {/* Handler de clique no mapa */}
         {onMapClick && (
@@ -329,9 +422,11 @@ export default function WorldMap({
         )}
 
         <MapController 
-          center={mapCenter} 
-          zoom={mapZoom} 
+          center={mapCenter}
+          zoom={mapZoom}
           selectedFeature={selectedCountryFeature}
+          onZoomChange={setMapZoom}
+          socket={socket}
         />
       </MapContainer>
     </div>

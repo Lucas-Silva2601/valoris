@@ -509,6 +509,290 @@
 
 ---
 
+## 🏛️ FASE 18: HIERARQUIA ADMINISTRATIVA E ECONOMIA URBANA
+
+### 18.1 Estrutura de Dados Hierárquica (Backend)
+- [x] Criar modelo State (Estado) vinculado ao Country
+  - [x] Campos: nome, código, polígono (GeoJSON), country_id
+  - [x] Criar repositório StateRepository para Supabase
+  - [x] Implementar validação de relacionamento com Country
+- [x] Criar modelo City (Cidade) vinculado ao State
+  - [x] Campos: nome, polígono (GeoJSON), state_id, land_value (preço base da terra)
+  - [x] Criar repositório CityRepository para Supabase
+  - [x] Implementar validação de relacionamento com State
+- [x] Criar modelo Lot (Lote) dentro de cidades
+  - [x] Campos: city_id, position, grid_x, grid_y, is_occupied
+  - [x] Criar repositório LotRepository para Supabase
+- [x] Refatorar modelo Building para adicionar campos obrigatórios
+  - [x] Adicionar campo city_id (obrigatório para novas construções)
+  - [x] Adicionar campo state_id (obrigatório para novas construções)
+  - [x] Adicionar campo lot_id para vincular ao lote
+  - [x] Adicionar campo yield_rate (taxa de retorno)
+  - [ ] Migrar edifícios existentes para nova estrutura
+  - [ ] Criar validação que impede construção sem city/state
+- [x] Implementar sistema de divisão de impostos
+  - [x] Prefeitura: 3% dos lucros
+  - [x] Estado: 2% dos lucros
+  - [x] Tesouro Nacional: 5% dos lucros
+  - [x] Criar serviço de cálculo e distribuição de taxas (taxService.js)
+  - [x] Integrar com treasuryService existente
+  - [ ] Implementar endpoints para consultar impostos por nível administrativo
+
+### 18.2 Geoprocessamento Avançado (GeoJSON & Turf.js)
+- [x] Obter e processar dados GeoJSON de estados
+  - [x] Implementar lazy loading de estados (carregar apenas quando necessário)
+  - [x] Criar cache de dados GeoJSON no backend
+  - [x] Criar serviço geoHierarchyService.js para gerenciar GeoJSON
+  - [ ] Otimizar polígonos para performance
+- [x] Obter e processar dados GeoJSON de cidades principais
+  - [x] Priorizar cidades mais populosas inicialmente
+  - [x] Implementar sistema de carregamento progressivo (lazy loading)
+  - [x] Criar endpoint para carregar cidades por estado (on-demand)
+- [x] Implementar detecção de clique 3-nível
+  - [x] Identificar País usando turf.booleanPointInPolygon
+  - [x] Identificar Estado dentro do país selecionado
+  - [x] Identificar Cidade dentro do estado selecionado
+  - [x] Criar função utilitária que retorna hierarquia completa (Country > State > City)
+  - [x] Criar endpoint POST /api/geography/identify
+- [x] Implementar sistema de Grid/Lotes dentro de cidades
+  - [x] Criar modelo Lot (Lote) vinculado à City (já criado na FASE 18.1)
+  - [x] Implementar sistema de grade/pixel dentro do polígono da cidade
+  - [x] Criar serviço gridLotService.js para gerenciar lotes
+  - [x] Implementar algoritmo de alocação de lotes vazios
+  - [x] Criar validação que impede construção no mesmo lote
+  - [ ] Criar visualização de lotes ocupados/vazios no mapa (frontend)
+
+### 18.3 Economia de Demanda e Utilidade (Valions)
+- [x] Implementar sistema de Aluguel (Yield) para edifícios
+  - [x] Calcular lucro baseado em: (Tipo de Prédio * Nível) + (População de NPCs / 100) + Atratividade + Satisfação de NPCs
+  - [x] Implementar métrica de "Atratividade da Cidade"
+  - [x] Criar serviço de cálculo de yield por edifício (urbanEconomyService.js)
+  - [x] Implementar distribuição de lucros via job agendado (buildingYieldJob.js)
+  - [x] Criar endpoint para consultar yield previsto (POST /api/buildings/predict-yield)
+  - [x] Criar endpoint para obter yield atual (GET /api/buildings/:buildingId/yield)
+- [x] Implementar Land Value Dinâmico
+  - [x] Calcular preço base baseado em número de prédios na cidade
+  - [x] Implementar fórmula de Lei da Oferta e Procura (cityRepository.updateLandValue)
+  - [x] Atualizar land_value automaticamente quando novos prédios são construídos
+  - [ ] Criar histórico de valorização da terra por cidade (futuro)
+  - [x] Implementar cache de cálculos para performance
+- [x] Implementar sistema de Consumo de NPCs
+  - [x] NPCs consomem recursos da cidade (comércio/fábricas)
+  - [x] Criar métrica de "Satisfação de NPCs" por cidade (npcConsumptionService.js)
+  - [x] Implementar migração automática de NPCs para cidades mais atrativas (updateCityPopulation)
+  - [x] Criar cálculo de impacto de NPCs no lucro dos imóveis (calculateNPCImpactOnYields)
+  - [x] Implementar alertas quando NPCs migram em massa (logs no job)
+
+### 18.4 Marketplace Imobiliário (Real Estate P2P)
+- [x] Criar modelo PropertyListing (Listagem de Imóveis)
+  - [x] Campos: building_id, seller_id, price, status (ativo/vendido/cancelado)
+  - [x] Criar repositório PropertyListingRepository
+  - [x] Implementar relacionamento com Building e User
+  - [x] Criar tabelas property_listings e property_transactions no schema.sql
+- [x] Criar interface de compra/venda de imóveis
+  - [x] Criar endpoint para listar imóveis à venda (GET /api/property-marketplace/listings)
+  - [x] Implementar filtros (cidade, tipo, faixa de preço)
+  - [x] Criar endpoint para criar listagem de venda (POST /api/property-marketplace/listings)
+  - [x] Implementar endpoint para cancelar listagem (DELETE /api/property-marketplace/listings/:listingId)
+- [x] Implementar sistema de Escritura Digital
+  - [x] Alterar owner_id do Building ao realizar compra
+  - [x] Transferir Valions automaticamente entre jogadores
+  - [x] Calcular e cobrar taxa de corretagem (5%)
+  - [x] Criar registro de transação imobiliária
+  - [x] Implementar validações de segurança (saldo suficiente, edifício existe, etc.)
+- [x] Implementar Histórico de Preços
+  - [x] Gravar cada venda com preço e data
+  - [x] Calcular valorização/depreciação por cidade (getCityPriceStats)
+  - [x] Criar endpoint para consultar histórico de preços (GET /api/property-marketplace/transactions)
+  - [x] Criar endpoint para estatísticas de valorização (GET /api/property-marketplace/cities/:cityId/stats)
+  - [ ] Preparar estrutura para gráficos futuros de valorização (frontend)
+
+### 18.5 Dinâmica de NPCs 2.0 (Vida Urbana)
+- [x] Implementar Cálculo de Felicidade
+  - [x] Calcular felicidade baseada em equilíbrio casas/empregos
+  - [x] Cidades com mais equilíbrio geram mais impostos (bônus de felicidade)
+  - [x] Criar métrica de "Qualidade de Vida" por cidade
+  - [x] Implementar impacto da felicidade nos lucros dos imóveis (yield multiplier)
+  - [x] Criar serviço urbanLifeService.js para métricas urbanas
+  - [x] Criar endpoints para consultar qualidade de vida e felicidade
+- [x] Implementar Sistema de Qualidade de Vida
+  - [x] Calcular equilíbrio entre casas e empregos
+  - [x] Calcular diversidade de tipos de edifícios
+  - [x] Integrar com satisfação de NPCs (já implementado na FASE 18.3)
+  - [x] Gerar recomendações para melhorar a cidade
+- [x] Integração com Sistema Econômico
+  - [x] Aplicar bônus de felicidade nos impostos (taxService.js)
+  - [x] Aplicar bônus de felicidade nos yields (urbanEconomyService.js)
+  - [x] Criar métricas urbanas completas (getCityUrbanMetrics)
+- [x] Criar dashboard de métricas urbanas
+  - [x] Criar componente UrbanMetricsDashboard.jsx
+  - [x] Integrar ao CountryPanel para exibir métricas quando há edifícios
+  - [x] Exibir qualidade de vida, felicidade, multiplicadores e recomendações
+  - [x] Criar gráficos de fatores de qualidade de vida
+  - [x] Adicionar seletor de cidade quando há múltiplas cidades
+  - [x] Adicionar campo treasury_balance nas tabelas cities e states (schema.sql)
+  - [x] Atualizar repositórios para suportar treasury_balance
+- [x] Refatorar sistema de NPCs para hierarquia urbana
+  - [x] NPCs devem ter homeBuilding vinculado a City
+  - [x] NPCs devem ter workBuilding vinculado a City
+  - [x] Garantir que home e work estejam na mesma cidade (ou cidades vizinhas)
+  - [x] Atualizar schema SQL com campos cityId, stateId, homeBuildingId, workBuildingId
+  - [x] Criar NPCRepository para Supabase
+- [x] Implementar Rotinas de NPC
+  - [x] Criar sistema de rotinas: Casa → Trabalho → Casa
+  - [x] Implementar horários virtuais (dia/noite para NPCs) - ciclo de 24h em 2h reais
+  - [x] NPCs retornam para casa após trabalho
+  - [x] Criar estado "trabalhando" e "descansando" para NPCs
+  - [x] Implementar estados: resting, going_to_work, working, going_home
+  - [x] Criar npcService.js com lógica de rotinas
+  - [x] Criar job npcRoutineJob.js para processar rotinas a cada 5 segundos
+- [x] Implementar Movimento Intra-Urbano
+  - [x] NPCs se movem preferencialmente dentro das ruas/áreas da cidade
+  - [x] Respeitar fronteiras municipais (não cruzar para outra cidade sem motivo)
+  - [x] Implementar detecção de colisão com fronteiras de cidade usando turf.booleanPointInPolygon
+  - [x] Criar sistema de rotas urbanas otimizadas (createUrbanRoute)
+  - [x] Implementar movimento ao longo da rota com validação de fronteiras
+  - [x] Criar componente React NPCMarkers.jsx para renderizar NPCs
+  - [x] Integrar NPCs no WorldMap (apenas em zoom >= 10 para performance)
+  - [x] Criar rotas e controllers para NPCs
+  - [x] Adicionar job de rotinas no server.js
+
+### 18.6 UI/UX (Interface do Usuário)
+- [x] Implementar Breadcrumbs de Localização
+  - [x] Exibir hierarquia: Mundo > Brasil > São Paulo > Capital
+  - [x] Criar componente BreadcrumbNavigation
+  - [x] Implementar navegação clicável entre níveis
+  - [x] Atualizar breadcrumbs dinamicamente ao navegar pelo mapa
+  - [x] Integrar breadcrumbs no GamePage
+- [x] Manter Indicador de Conexão sempre visível
+  - [x] Garantir que bolinha de status "Conectado" esteja sempre visível
+  - [x] Melhorar feedback visual de conexão/desconexão (animação pulse, cores)
+  - [x] Adicionar tooltip com informações de conexão (hover para detalhes)
+  - [x] Exibir tentativas de reconexão quando desconectado
+- [x] Atualizar Modal de Construção
+  - [x] Exibir custo específico da cidade selecionada (inclui land_value)
+  - [x] Mostrar land_value atual da cidade
+  - [x] Exibir previsão de retorno (ROI) em Valions (predictedYield)
+  - [x] Mostrar métricas de atratividade da cidade
+  - [x] Exibir informações de impostos (3% Prefeitura, 2% Estado, 5% Nacional)
+  - [x] Carregar informações da cidade automaticamente quando cityId disponível
+  - [x] Atualizar getBuildingCost para incluir land_value quando cityId fornecido
+  - [x] Adicionar rotas para buscar cidade e estado por ID
+- [x] Criar Interface de Marketplace Imobiliário
+  - [x] Criar página/listagem de imóveis à venda (PropertyMarketplace.jsx)
+  - [x] Implementar filtros e busca (por tipo, preço, cidade, texto)
+  - [x] Criar modal de detalhes do imóvel (PropertyDetailsModal.jsx)
+  - [x] Implementar processo de compra simplificado (com validação de saldo)
+  - [x] Criar histórico de compras/vendas do jogador (PropertyHistory.jsx)
+  - [x] Integrar marketplace no CountryPanel
+- [x] Implementar Visualização de Hierarquia no Mapa
+  - [x] Mostrar limites de estados quando zoom apropriado (StateBoundaries.jsx - zoom >= 6)
+  - [x] Mostrar limites de cidades quando zoom alto (CityBoundaries.jsx - zoom >= 10)
+  - [x] Visualizar lotes ocupados/vazios nas cidades (LotVisualization.jsx - zoom >= 12)
+  - [x] Implementar cores diferentes para níveis administrativos (verde/laranja/vermelho para cidades)
+  - [x] Criar legenda explicativa (MapLegend.jsx com informações de zoom e cores)
+  - [x] Adicionar rota para buscar lotes de uma cidade
+
+### 18.7 Otimização e Performance
+- [x] Implementar Lazy Loading de GeoJSON
+  - [x] Carregar estados apenas quando país é selecionado (StateBoundaries.jsx - zoom >= 6)
+  - [x] Carregar cidades apenas quando estado é visualizado (CityBoundaries.jsx - zoom >= 10)
+  - [x] Implementar cache inteligente no frontend (geoJsonCache.js com TTL de 5 minutos)
+  - [x] Evitar carregar todas as cidades do mundo de uma vez (lazy loading por estado)
+  - [x] Otimizar tamanho dos arquivos GeoJSON (carregamento sob demanda)
+- [x] Otimizar Queries de Banco de Dados
+  - [x] Criar índices em city_id, state_id, country_id (já existem no schema.sql)
+  - [x] Otimizar queries de busca hierárquica (cache no backend)
+  - [x] Implementar paginação para listagens de imóveis (PropertyMarketplace com page/limit)
+  - [x] Cachear cálculos de land_value e yield (calculationCache.js criado)
+- [x] Monitorar Performance
+  - [x] Adicionar logs de tempo de carregamento de GeoJSON (performanceMonitor.js + logs no geoHierarchyService)
+  - [x] Monitorar uso de memória com muitos polígonos (performanceMonitor.js)
+  - [x] Testar performance com zoom in/out rápido (cache evita recarregamentos)
+  - [x] Implementar debounce em operações de detecção de clique (debounce.js + mapClickUtils.js - 300ms)
+
+---
+
+## 🚀 FASE 19: ESTABILIZAÇÃO E "RESGATE" DO SISTEMA
+
+### 19.1 Tratamento Global de Erros (Blindagem)
+- [x] Backend: Global Error Middleware
+  - [x] Implementar middleware de tratamento global de erros no Express
+  - [x] Interceptar erros não tratados em rotas
+  - [x] Retornar JSON de erro estruturado em vez de crashar o servidor
+  - [x] Logar erros detalhados no backend para debug
+  - [x] Tratar erros de banco de dados (Supabase) de forma elegante
+- [x] Frontend: Error Boundaries
+  - [x] Criar/atualizar ErrorBoundary para envolver o componente do Mapa (WorldMap)
+  - [x] Criar/atualizar ErrorBoundary para envolver o Painel Lateral (CountryPanel)
+  - [x] Implementar reset automático do componente em caso de erro
+  - [x] Exibir mensagem amigável ao usuário em vez de tela preta
+  - [x] Garantir que erro em um componente não quebre o jogo inteiro
+- [x] Fallback de Dados
+  - [x] Implementar fallback para API de NPCs (retornar array vazio [] se falhar)
+  - [x] Implementar fallback para API de edifícios (retornar array vazio [] se falhar)
+  - [x] Implementar fallback para API de geografia (retornar dados padrão se falhar)
+  - [x] Garantir que o mapa continue funcionando mesmo com APIs offline
+
+### 19.2 Otimização de Performance de Mapa (Canvas vs SVG)
+- [x] Leaflet Canvas Renderer
+  - [x] Ativar `preferCanvas: true` na configuração do Leaflet
+  - [x] Verificar performance com muitos marcadores (1000+ NPCs)
+  - [x] Verificar performance com muitos edifícios (centenas)
+  - [x] Comparar uso de memória SVG vs Canvas
+  - [x] Garantir que Canvas não quebre interatividade de popups/cliques
+- [x] Throttling de Socket.io
+  - [x] Implementar cálculo de Bounding Box do jogador atual
+  - [x] Filtrar NPCs dentro do campo de visão (viewport) do mapa
+  - [x] Enviar apenas NPCs visíveis via Socket.io
+  - [x] Atualizar lista de NPCs quando jogador zoom/pana no mapa
+  - [x] Reduzir payload de Socket.io de 1000+ objetos para apenas os visíveis
+- [x] Web Workers para Turf.js
+  - [x] Criar Web Worker para cálculos geográficos (pointInPolygon)
+  - [x] Mover verificação "ponto dentro do polígono" para Web Worker
+  - [x] Evitar que UI congele durante cálculos de clique no mapa
+  - [x] Implementar comunicação assíncrona entre main thread e worker
+  - [x] Testar performance com muitos cálculos simultâneos
+
+### 19.3 Lógica de Negócio e Consistência (Database)
+- [x] Integridade Referencial
+  - [x] Criar script para limpar edifícios "órfãos" (sem cidade)
+  - [x] Criar script para limpar NPCs "órfãos" (sem cidade)
+  - [x] Validar referências antes de criar novos registros
+  - [x] Implementar cleanup automático ou manual de dados inconsistentes
+  - [x] Documentar processo de manutenção de integridade
+- [x] Transações Atômicas
+  - [x] Implementar transação para compra de imóvel (subtractBalance + update ownerId)
+  - [x] Implementar transação para construção de edifício (subtractBalance + create building)
+  - [x] Garantir rollback se qualquer parte da transação falhar
+  - [x] Testar cenários de falha (saldo insuficiente, edifício já vendido, etc.)
+  - [x] Documentar todas as operações que requerem transação
+
+### 19.4 Monitoramento em Tempo Real para Debug
+- [x] Painel de Debug de Admin
+  - [x] Criar rota/admin de debug (protegida por autenticação)
+  - [x] Mostrar quantidade de NPCs ativos no sistema
+  - [x] Mostrar uso de memória do servidor (Node.js)
+  - [x] Mostrar tempo de resposta médio do banco de dados
+  - [x] Mostrar estatísticas de conexões Socket.io ativas
+  - [x] Mostrar taxa de erros por endpoint (últimas 24h)
+- [x] Log de Eventos no Frontend
+  - [x] Criar componente de log de eventos (desenvolvimento apenas)
+  - [x] Mostrar erros do Socket.io em tempo real
+  - [x] Mostrar erros de API em tempo real
+  - [x] Permitir toggle on/off do log (tecla de atalho)
+  - [x] Limitar quantidade de logs exibidos (scroll automático)
+  - [x] Filtrar logs por tipo (erro, warning, info)
+
+**💡 Instruções Importantes:**
+- **PRIORIZAR PERFORMANCE**: Ao implementar a FASE 18, sempre use Lazy Loading para GeoJSON
+- **NÃO CARREGAR TUDO**: Nunca carregue todas as cidades do mundo de uma vez
+- **CARREGAR SOB DEMANDA**: Carregue estados apenas quando país é clicado, cidades apenas quando zoom é alto no estado
+- **CACHE INTELIGENTE**: Use cache no frontend para evitar requisições repetidas
+- **TESTAR PERFORMANCE**: Sempre teste com zoom rápido e navegação intensa para garantir que não trave o navegador
+
+---
+
 **📌 NOTAS:**
 - Marque cada item como concluído usando `[x]`
 - Priorize o MVP primeiro

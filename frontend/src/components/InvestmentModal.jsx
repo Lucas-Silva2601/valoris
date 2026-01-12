@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../hooks/useToast';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 export default function InvestmentModal({ country, onClose, onSuccess }) {
   const [shares, setShares] = useState(1);
@@ -22,7 +21,7 @@ export default function InvestmentModal({ country, onClose, onSuccess }) {
 
   const loadOwnershipInfo = async () => {
     try {
-      const response = await fetch(`${API_URL}/ownership/${country.id}/info`);
+      const response = await fetch(`${API_BASE_URL}/ownership/${country.id}/info`);
       if (response.ok) {
         const data = await response.json();
         setOwnershipInfo(data);
@@ -41,7 +40,7 @@ export default function InvestmentModal({ country, onClose, onSuccess }) {
 
   const loadEconomicData = async () => {
     try {
-      const response = await fetch(`${API_URL}/countries/${country.id}/economic`);
+      const response = await fetch(`${API_BASE_URL}/countries/${country.id}/economic`);
       if (response.ok) {
         const data = await response.json();
         setEconomicData(data);
@@ -75,13 +74,19 @@ export default function InvestmentModal({ country, onClose, onSuccess }) {
     setError(null);
 
     try {
+      const userId = localStorage.getItem('userId') || 'test-user-id';
+      const token = localStorage.getItem('token');
+      
       const headers = {
         'Content-Type': 'application/json',
-        'user-id': '507f1f77bcf86cd799439011',
-        'username': 'testuser'
+        'user-id': userId
       };
+      
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
 
-      const response = await fetch(`${API_URL}/ownership/buy`, {
+      const response = await fetch(`${API_BASE_URL}/ownership/buy`, {
         method: 'POST',
         headers,
         body: JSON.stringify({

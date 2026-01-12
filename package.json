@@ -5,16 +5,19 @@
   "description": "Simulador geopolítico de estratégia militar e financeira em tempo real (RTS/Web3)",
   "main": "backend/server.js",
   "scripts": {
-    "predev": "node scripts/setup-dev.js",
+    "preclean": "echo Limpando portas ocupadas...",
+    "clean": "node scripts/cleanup-ports.js",
+    "predev": "npm run clean && node scripts/setup-dev.js",
     "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "cd backend && nodemon server.js",
     "dev:frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "start": "cd backend && node server.js",
+    "start": "npm run clean && cd backend && node server.js",
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install --legacy-peer-deps",
     "diagnose": "node scripts/diagnose.js",
     "check": "node scripts/diagnose.js",
-    "deploy:check": "node scripts/diagnose.js"
+    "deploy:check": "node scripts/diagnose.js",
+    "kill-ports": "npm run clean"
   },
   "keywords": [
     "game",

@@ -20,18 +20,71 @@ export default function BuildingModal({
   countryName, 
   position,
   countryGeometry, // ✅ Geometria do país para calcular centroide se necessário
+  cityId = null, // ✅ FASE 18.6: ID da cidade (opcional)
   onBuild 
 }) {
   const [selectedType, setSelectedType] = useState('house');
   const [level, setLevel] = useState(1);
   const [cost, setCost] = useState(0);
   const [loading, setLoading] = useState(false);
+  // ✅ FASE 18.6: Estados para informações da cidade
+  const [cityInfo, setCityInfo] = useState(null);
+  const [predictedYield, setPredictedYield] = useState(null);
+  const [loadingCityInfo, setLoadingCityInfo] = useState(false);
+
+  // ✅ FASE 18.6: Carregar informações da cidade quando modal abrir
+  useEffect(() => {
+    const loadCityInfo = async () => {
+      if (!isOpen || !cityId) {
+        setCityInfo(null);
+        setPredictedYield(null);
+        return;
+      }
+
+      setLoadingCityInfo(true);
+      try {
+        // Carregar informações da cidade
+        const cityResponse = await fetch(`${API_BASE_URL}/geography/cities/${cityId}`);
+        if (cityResponse.ok) {
+          const cityData = await cityResponse.json();
+          setCityInfo(cityData);
+        }
+
+        // Calcular previsão de yield
+        if (selectedType && level) {
+          const yieldResponse = await apiRequest('/buildings/predict-yield', {
+            method: 'POST',
+            body: JSON.stringify({
+              buildingType: selectedType,
+              level: level,
+              cityId: cityId
+            })
+          });
+          if (yieldResponse.data) {
+            setPredictedYield(yieldResponse.data);
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao carregar informações da cidade:', error);
+      } finally {
+        setLoadingCityInfo(false);
+      }
+    };
+
+    loadCityInfo();
+  }, [isOpen, cityId, selectedType, level]);
 
   // Calcular custo quando tipo ou nível mudar
   useEffect(() => {
     const fetchCost = async () => {
       try {
-        const { data } = await apiRequest(`/buildings/cost?type=${selectedType}&level=${level}`);
+        // ✅ FASE 18.6: Incluir cityId na requisição para calcular custo com land_value
+        let url = `/buildings/cost?type=${selectedType}&level=${level}`;
+        if (cityId) {
+          url += `&cityId=${cityId}`;
+        }
+        
+        const { data } = await apiRequest(url);
         if (data.cost) {
           setCost(data.cost);
         } else {
@@ -64,7 +117,7 @@ export default function BuildingModal({
     if (isOpen && selectedType) {
       fetchCost();
     }
-  }, [selectedType, level, isOpen]);
+  }, [selectedType, level, isOpen, cityId]);
 
   // ✅ Função para gerar ponto ALEATÓRIO ESPALHADO dentro do país (não apenas centroide)
   const generateRandomPositionInCountry = async () => {
@@ -193,7 +246,8 @@ export default function BuildingModal({
 
       // ✅ Usar apiRequest para melhor tratamento de erros
       // ✅ IMPORTANTE: O servidor vai deduzir o custo da carteira automaticamente
-      const { data } = await apiRequest('/buildings/build', {
+      // ✅ CORRIGIDO: Rota correta é /buildings (não /buildings/build)
+      const { data } = await apiRequest('/buildings', {
         method: 'POST',
         body: JSON.stringify({
           countryId: finalCountryId,

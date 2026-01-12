@@ -1,11 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSocket } from './useSocket';
 
 /**
  * Hook para gerenciar atualizações em tempo real
  */
 export const useRealtimeUpdates = (countryId = null) => {
-  const { isConnected, addListener, removeListener, joinCountry, leaveCountry } = useSocket();
+  const { isConnected, addListener, removeListener, emit } = useSocket();
+  
+  // ✅ Criar funções joinCountry e leaveCountry usando emit
+  const joinCountry = useCallback((countryId) => {
+    if (isConnected && emit) {
+      console.log(`📡 Entrando no canal do país: ${countryId}`);
+      emit('join_country', { countryId });
+    }
+  }, [isConnected, emit]);
+  
+  const leaveCountry = useCallback((countryId) => {
+    if (isConnected && emit) {
+      console.log(`📡 Saindo do canal do país: ${countryId}`);
+      emit('leave_country', { countryId });
+    }
+  }, [isConnected, emit]);
   const [unitPositions, setUnitPositions] = useState({});
   const [balance, setBalance] = useState(null);
   const [dividends, setDividends] = useState([]);

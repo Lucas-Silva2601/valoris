@@ -1,25 +1,15 @@
 import { BaseRepository } from './baseRepository.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('NPCRepository');
 
 export class NPCRepository extends BaseRepository {
   constructor() {
     super('npcs');
   }
 
-  /**
-   * Converter formato do Mongoose para formato do Supabase
-   */
   formatToSupabase(npc) {
-    // Função auxiliar para converter Date para ISO string
-    const toISO = (date) => {
-      if (!date) return null;
-      if (date instanceof Date) return date.toISOString();
-      if (typeof date === 'string') return date;
-      return null;
-    };
-
     const data = {};
-    
-    // Apenas incluir campos que foram fornecidos (para updates parciais)
     if (npc.npcId !== undefined) data.npc_id = npc.npcId;
     if (npc.npc_id !== undefined) data.npc_id = npc.npc_id;
     if (npc.name !== undefined) data.name = npc.name;
@@ -27,275 +17,179 @@ export class NPCRepository extends BaseRepository {
     if (npc.country_id !== undefined) data.country_id = npc.country_id;
     if (npc.countryName !== undefined) data.country_name = npc.countryName;
     if (npc.country_name !== undefined) data.country_name = npc.country_name;
-    
-    // ✅ Posição - GARANTIR que sempre tenha valores válidos (não null)
-    if (npc.position !== undefined && npc.position !== null) {
-      // Se position for um objeto com lat e lng válidos
-      if (typeof npc.position === 'object' && npc.position.lat != null && npc.position.lng != null) {
-        data.position_lat = parseFloat(npc.position.lat);
-        data.position_lng = parseFloat(npc.position.lng);
-      }
-    } else if (npc.position_lat !== undefined && npc.position_lat !== null && 
-               npc.position_lng !== undefined && npc.position_lng !== null) {
-      // Se position_lat/lng forem fornecidos diretamente
-      data.position_lat = parseFloat(npc.position_lat);
-      data.position_lng = parseFloat(npc.position_lng);
-    }
-    // ✅ Se nenhuma posição for fornecida e estivermos fazendo UPDATE, NÃO incluir no objeto
-    // (manter posição atual do banco) - isso evita passar null e violar constraint NOT NULL
-    
-    // Target position
-    if (npc.targetPosition !== undefined) {
-      if (npc.targetPosition === null) {
-        data.target_position_lat = null;
-        data.target_position_lng = null;
-      } else {
-        data.target_position_lat = npc.targetPosition.lat;
-        data.target_position_lng = npc.targetPosition.lng;
-      }
-    } else {
-      if (npc.target_position_lat !== undefined) data.target_position_lat = npc.target_position_lat;
-      if (npc.target_position_lng !== undefined) data.target_position_lng = npc.target_position_lng;
-    }
-    
-    if (npc.homeBuilding !== undefined) data.home_building_id = npc.homeBuilding;
+    // ✅ FASE 18.5: Campos hierárquicos
+    if (npc.stateId !== undefined) data.state_id = npc.stateId;
+    if (npc.state_id !== undefined) data.state_id = npc.state_id;
+    if (npc.stateName !== undefined) data.state_name = npc.stateName;
+    if (npc.state_name !== undefined) data.state_name = npc.state_name;
+    if (npc.cityId !== undefined) data.city_id = npc.cityId;
+    if (npc.city_id !== undefined) data.city_id = npc.city_id;
+    if (npc.cityName !== undefined) data.city_name = npc.cityName;
+    if (npc.city_name !== undefined) data.city_name = npc.city_name;
+    if (npc.positionLat !== undefined) data.position_lat = parseFloat(npc.positionLat);
+    if (npc.position_lat !== undefined) data.position_lat = parseFloat(npc.position_lat);
+    if (npc.positionLng !== undefined) data.position_lng = parseFloat(npc.positionLng);
+    if (npc.position_lng !== undefined) data.position_lng = parseFloat(npc.position_lng);
+    if (npc.targetPositionLat !== undefined) data.target_position_lat = parseFloat(npc.targetPositionLat);
+    if (npc.target_position_lat !== undefined) data.target_position_lat = parseFloat(npc.target_position_lat);
+    if (npc.targetPositionLng !== undefined) data.target_position_lng = parseFloat(npc.targetPositionLng);
+    if (npc.target_position_lng !== undefined) data.target_position_lng = parseFloat(npc.target_position_lng);
+    // ✅ FASE 18.5: Edifícios de casa e trabalho
+    if (npc.homeBuildingId !== undefined) data.home_building_id = npc.homeBuildingId;
     if (npc.home_building_id !== undefined) data.home_building_id = npc.home_building_id;
-    if (npc.workBuilding !== undefined) data.work_building_id = npc.workBuilding;
+    if (npc.workBuildingId !== undefined) data.work_building_id = npc.workBuildingId;
     if (npc.work_building_id !== undefined) data.work_building_id = npc.work_building_id;
     if (npc.status !== undefined) data.status = npc.status;
+    if (npc.routineState !== undefined) data.routine_state = npc.routineState;
+    if (npc.routine_state !== undefined) data.routine_state = npc.routine_state;
+    // ✅ FASE 18.5: virtual_hour - NÃO incluir no update (coluna pode não existir no schema ainda)
+    // O BaseRepository já trata isso automaticamente removendo campos que não existem
+    // Deixar comentado até que a coluna seja adicionada ao schema
+    // if (npc.virtualHour !== undefined && npc.virtualHour !== null) {
+    //   data.virtual_hour = parseInt(npc.virtualHour);
+    // }
+    // if (npc.virtual_hour !== undefined && npc.virtual_hour !== null) {
+    //   data.virtual_hour = parseInt(npc.virtual_hour);
+    // }
     if (npc.skinColor !== undefined) data.skin_color = npc.skinColor;
     if (npc.skin_color !== undefined) data.skin_color = npc.skin_color;
     if (npc.currentTask !== undefined) data.current_task = npc.currentTask;
     if (npc.current_task !== undefined) data.current_task = npc.current_task;
-    if (npc.speed !== undefined) data.speed = npc.speed;
-    if (npc.direction !== undefined) data.direction = npc.direction;
-    if (npc.lastMovementTime !== undefined) data.last_movement_time = toISO(npc.lastMovementTime);
-    if (npc.last_movement_time !== undefined) data.last_movement_time = toISO(npc.last_movement_time);
-    if (npc.nextActionTime !== undefined) data.next_action_time = toISO(npc.nextActionTime);
-    if (npc.next_action_time !== undefined) data.next_action_time = toISO(npc.next_action_time);
+    if (npc.speed !== undefined) data.speed = parseFloat(npc.speed);
+    if (npc.speed !== undefined) data.speed = parseFloat(npc.speed);
+    if (npc.direction !== undefined) data.direction = parseFloat(npc.direction);
+    if (npc.direction !== undefined) data.direction = parseFloat(npc.direction);
+    // ✅ FASE 18.5: Rota urbana
+    if (npc.currentRoute !== undefined) {
+      data.current_route = typeof npc.currentRoute === 'string' ? JSON.parse(npc.currentRoute) : npc.currentRoute;
+    }
+    if (npc.current_route !== undefined) {
+      data.current_route = typeof npc.current_route === 'string' ? JSON.parse(npc.current_route) : npc.current_route;
+    }
+    if (npc.routeIndex !== undefined) data.route_index = parseInt(npc.routeIndex);
+    if (npc.route_index !== undefined) data.route_index = parseInt(npc.route_index);
+    if (npc.lastMovementTime !== undefined) data.last_movement_time = npc.lastMovementTime;
+    if (npc.last_movement_time !== undefined) data.last_movement_time = npc.last_movement_time;
+    if (npc.nextActionTime !== undefined) data.next_action_time = npc.nextActionTime;
+    if (npc.next_action_time !== undefined) data.next_action_time = npc.next_action_time;
     if (npc.npcType !== undefined) data.npc_type = npc.npcType;
     if (npc.npc_type !== undefined) data.npc_type = npc.npc_type;
-    
+    data.updated_at = new Date().toISOString();
     return data;
   }
 
-  /**
-   * Converter formato do Supabase para formato do Mongoose
-   */
   formatFromSupabase(record) {
     if (!record) return null;
-    
     return {
       ...record,
       _id: record.id,
       npcId: record.npc_id,
+      name: record.name,
       countryId: record.country_id,
       countryName: record.country_name,
+      // ✅ FASE 18.5: Campos hierárquicos
+      stateId: record.state_id,
+      stateName: record.state_name,
+      cityId: record.city_id,
+      cityName: record.city_name,
       position: {
-        lat: record.position_lat,
-        lng: record.position_lng
+        lat: parseFloat(record.position_lat),
+        lng: parseFloat(record.position_lng)
       },
+      positionLat: parseFloat(record.position_lat),
+      positionLng: parseFloat(record.position_lng),
       targetPosition: record.target_position_lat && record.target_position_lng ? {
-        lat: record.target_position_lat,
-        lng: record.target_position_lng
+        lat: parseFloat(record.target_position_lat),
+        lng: parseFloat(record.target_position_lng)
       } : null,
-      homeBuilding: record.home_building_id,
-      workBuilding: record.work_building_id,
+      targetPositionLat: record.target_position_lat ? parseFloat(record.target_position_lat) : null,
+      targetPositionLng: record.target_position_lng ? parseFloat(record.target_position_lng) : null,
+      // ✅ FASE 18.5: Edifícios
+      homeBuildingId: record.home_building_id,
+      workBuildingId: record.work_building_id,
+      status: record.status,
+      routineState: record.routine_state || 'resting',
+      virtualHour: parseInt(record.virtual_hour || 8),
       skinColor: record.skin_color,
       currentTask: record.current_task,
+      speed: parseFloat(record.speed || 5.0),
+      direction: parseFloat(record.direction || 0),
+      // ✅ FASE 18.5: Rota urbana
+      currentRoute: typeof record.current_route === 'string' ? JSON.parse(record.current_route || '[]') : (record.current_route || []),
+      routeIndex: parseInt(record.route_index || 0),
       lastMovementTime: record.last_movement_time,
       nextActionTime: record.next_action_time,
-      npcType: record.npc_type
+      npcType: record.npc_type || 'resident',
+      createdAt: record.created_at,
+      updatedAt: record.updated_at
     };
   }
 
-  /**
-   * Criar NPC
-   * ✅ GARANTIR que sempre tenha posição válida
-   */
   async create(npc) {
     const data = this.formatToSupabase(npc);
-    
-    // ✅ GARANTIR que position_lat e position_lng sempre existam e sejam válidos (OBRIGATÓRIO para INSERT)
-    if (!data.position_lat || !data.position_lng ||
-        isNaN(data.position_lat) || isNaN(data.position_lng)) {
-      throw new Error(`NPC deve ter posição válida (lat: ${data.position_lat}, lng: ${data.position_lng})`);
-    }
-    
-    // ✅ Garantir que valores são números válidos
-    data.position_lat = parseFloat(data.position_lat);
-    data.position_lng = parseFloat(data.position_lng);
-    
-    // ✅ Validar limites
-    if (data.position_lat < -90 || data.position_lat > 90 ||
-        data.position_lng < -180 || data.position_lng > 180) {
-      throw new Error(`Posição do NPC fora dos limites (lat: ${data.position_lat}, lng: ${data.position_lng})`);
-    }
-    
     const record = await super.create(data);
     return this.formatFromSupabase(record);
   }
 
-  /**
-   * Buscar por npc_id
-   */
-  async findByNpcId(npcId) {
+  async findByNPCId(npcId) {
     const record = await this.findOne({ npc_id: npcId });
     return this.formatFromSupabase(record);
   }
 
-  /**
-   * Buscar por country_id
-   */
+  async findByCityId(cityId) {
+    const supabase = this.getClient();
+    const { data: records, error } = await supabase
+      .from(this.tableName)
+      .select('*')
+      .eq('city_id', cityId);
+
+    if (error) {
+      logger.error(`Erro ao buscar NPCs por city_id ${cityId}:`, error);
+      throw error;
+    }
+    return this.formatRecords(records || []);
+  }
+
   async findByCountryId(countryId) {
-    const records = await this.find({ country_id: countryId });
-    return records.map(record => this.formatFromSupabase(record));
+    const supabase = this.getClient();
+    const { data: records, error } = await supabase
+      .from(this.tableName)
+      .select('*')
+      .eq('country_id', countryId);
+
+    if (error) {
+      logger.error(`Erro ao buscar NPCs por country_id ${countryId}:`, error);
+      throw error;
+    }
+    return this.formatRecords(records || []);
   }
 
-  /**
-   * Buscar todos os NPCs
-   */
-  async findAll(options = {}) {
-    const records = await this.find({}, options);
-    return records.map(record => this.formatFromSupabase(record));
+  async findByRoutineState(routineState) {
+    const supabase = this.getClient();
+    const { data: records, error } = await supabase
+      .from(this.tableName)
+      .select('*')
+      .eq('routine_state', routineState);
+
+    if (error) {
+      logger.error(`Erro ao buscar NPCs por routine_state ${routineState}:`, error);
+      throw error;
+    }
+    return this.formatRecords(records || []);
   }
 
-  /**
-   * Atualizar NPC por ID (UUID)
-   * ✅ GARANTIR que posição seja preservada se não for fornecida nova
-   */
   async update(id, npc) {
-    // ✅ Se npc já é objeto formatado (data direto), usar diretamente
-    // Senão, formatar primeiro
-    let data;
-    if (npc.position_lat !== undefined || npc.position_lng !== undefined || 
-        (npc.position !== undefined && npc.position !== null)) {
-      // É um objeto com posição (formato do código)
-      data = this.formatToSupabase(npc);
-    } else {
-      // É um objeto já formatado (direto do Supabase)
-      data = npc;
-    }
-    
-    // ✅ Se position não foi fornecida no update, buscar a atual do banco para preservar
-    if (!data.position_lat && !data.position_lng) {
-      const existing = await this.findById(id);
-      if (existing && existing.position) {
-        data.position_lat = existing.position.lat;
-        data.position_lng = existing.position.lng;
-      } else {
-        // Se não existe no banco ou não tem posição, não pode atualizar sem posição válida
-        throw new Error(`NPC ${id} não tem posição válida e nenhuma foi fornecida no update`);
-      }
-    }
-    
-    // ✅ GARANTIR que position_lat e position_lng são válidos
-    if (data.position_lat !== undefined && data.position_lng !== undefined) {
-      data.position_lat = parseFloat(data.position_lat);
-      data.position_lng = parseFloat(data.position_lng);
-      
-      // Validar limites
-      if (isNaN(data.position_lat) || isNaN(data.position_lng) ||
-          data.position_lat < -90 || data.position_lat > 90 ||
-          data.position_lng < -180 || data.position_lng > 180) {
-        throw new Error(`Posição inválida fornecida para NPC ${id}`);
-      }
-    }
-    
+    const data = this.formatToSupabase(npc);
     const record = await super.update(id, data);
     return this.formatFromSupabase(record);
   }
 
-  /**
-   * Atualizar NPC por npc_id (string)
-   * ✅ GARANTIR que posição seja SEMPRE preservada (nunca null)
-   */
-  async updateByNpcId(npcId, npc) {
-    const existing = await this.findByNpcId(npcId);
+  async updateByNPCId(npcId, npc) {
+    const existing = await this.findByNPCId(npcId);
     if (!existing) {
-      throw new Error(`NPC com npc_id ${npcId} não encontrado`);
+      throw new Error(`NPC não encontrado para ${npcId}`);
     }
-    
-    // ✅ Formatar dados para Supabase
-    const data = this.formatToSupabase(npc);
-    
-    // ✅ GARANTIR que SEMPRE temos position_lat e position_lng válidos
-    // Se não foi fornecida nova posição, usar posição atual do NPC existente
-    if (!data.position_lat || !data.position_lng || 
-        data.position_lat === null || data.position_lng === null ||
-        data.position_lat === undefined || data.position_lng === undefined) {
-      
-      // ✅ Tentar usar posição atual do NPC existente
-      if (existing.position && existing.position.lat != null && existing.position.lng != null &&
-          !isNaN(existing.position.lat) && !isNaN(existing.position.lng)) {
-        data.position_lat = parseFloat(existing.position.lat);
-        data.position_lng = parseFloat(existing.position.lng);
-        logger.debug(`Preservando posição atual do NPC ${npcId}:`, { lat: data.position_lat, lng: data.position_lng });
-      } else {
-        // ✅ Se NPC não tem posição válida, usar coordenadas padrão do país ou Brasil
-        logger.warn(`⚠️  NPC ${npcId} não tem posição válida. Usando coordenadas do país ou padrão.`);
-        const countryCoords = {
-          'BRA': { lat: -14.2350, lng: -51.9253 },
-          'USA': { lat: 37.0902, lng: -95.7129 },
-          'ARG': { lat: -38.4161, lng: -63.6167 },
-          'PER': { lat: -9.1900, lng: -75.0152 },
-          'BOL': { lat: -16.2902, lng: -63.5887 },
-          'COL': { lat: 4.5709, lng: -74.2973 },
-          'VEN': { lat: 6.4238, lng: -66.5897 },
-        };
-        
-        const knownCoords = existing.countryId ? countryCoords[existing.countryId?.toUpperCase()] : null;
-        if (knownCoords) {
-          data.position_lat = knownCoords.lat;
-          data.position_lng = knownCoords.lng;
-          logger.info(`✅ Usando coordenadas do país ${existing.countryId} para NPC ${npcId}`);
-        } else {
-          // Fallback final: usar centro do Brasil
-          data.position_lat = -14.2350;
-          data.position_lng = -51.9253;
-          logger.warn(`⚠️  Usando coordenadas padrão (Brasil) para NPC ${npcId}`);
-        }
-      }
-    } else {
-      // ✅ Se position foi fornecida, validar antes de usar
-      const providedLat = parseFloat(data.position_lat);
-      const providedLng = parseFloat(data.position_lng);
-      
-      if (isNaN(providedLat) || isNaN(providedLng) ||
-          providedLat < -90 || providedLat > 90 ||
-          providedLng < -180 || providedLng > 180) {
-        logger.warn(`⚠️  Posição inválida fornecida para NPC ${npcId}. Usando posição atual.`);
-        // Usar posição atual se inválida foi fornecida
-        if (existing.position && existing.position.lat != null && existing.position.lng != null) {
-          data.position_lat = parseFloat(existing.position.lat);
-          data.position_lng = parseFloat(existing.position.lng);
-        } else {
-          // Usar coordenadas padrão se nem atual nem fornecida são válidas
-          data.position_lat = -14.2350;
-          data.position_lng = -51.9253;
-        }
-      } else {
-        // ✅ Posição fornecida é válida, usar ela
-        data.position_lat = providedLat;
-        data.position_lng = providedLng;
-      }
-    }
-    
-    // ✅ GARANTIR que position_lat e position_lng são números válidos (nunca null)
-    if (!data.position_lat || !data.position_lng || 
-        isNaN(data.position_lat) || isNaN(data.position_lng)) {
-      throw new Error(`NPC ${npcId}: Não foi possível garantir posição válida. position_lat=${data.position_lat}, position_lng=${data.position_lng}`);
-    }
-    
-    return await this.update(existing.id, data);
-  }
-
-  /**
-   * Buscar por status
-   */
-  async findByStatus(status) {
-    const records = await this.find({ status });
-    return records.map(record => this.formatFromSupabase(record));
+    return await this.update(existing.id, npc);
   }
 }
 

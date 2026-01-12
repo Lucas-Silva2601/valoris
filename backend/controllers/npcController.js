@@ -1,157 +1,187 @@
 import * as npcService from '../services/npcService.js';
-import { checkConnection } from '../config/supabase.js';
+import npcRepository from '../repositories/npcRepository.js';
+import { createLogger } from '../utils/logger.js';
 
-// ✅ FALLBACK: NPCs mockados para quando o banco estiver offline
-const getMockNPCs = () => {
-  const skinTones = ['#f4d5bd', '#422d1a', '#d4a574', '#8b6f47', '#c9a882', '#a67c52'];
-  const mockNPCs = [];
-  
-  // Criar 20 NPCs mockados espalhados pelo mundo
-  for (let i = 0; i < 20; i++) {
-    mockNPCs.push({
-      npcId: `mock_npc_${i}`,
-      name: `NPC ${i + 1}`,
-      countryId: 'BRA', // Brasil como padrão
-      countryName: 'Brazil',
-      position: {
-        lat: -14.2350 + (Math.random() - 0.5) * 20, // Variação no Brasil
-        lng: -51.9253 + (Math.random() - 0.5) * 20
-      },
-      status: 'idle',
-      npcType: Math.random() > 0.5 ? 'resident' : 'worker',
-      skinColor: skinTones[Math.floor(Math.random() * skinTones.length)],
-      _id: `mock_${i}`,
-      homeBuilding: null,
-      workBuilding: null
-    });
-  }
-  
-  return mockNPCs;
-};
+const logger = createLogger('NPCController');
 
-export const getNPCsByCountry = async (req, res) => {
-  try {
-    const { countryId } = req.params;
-    
-    // ✅ Verificar se banco está conectado
-    if (!checkConnection()) {
-      console.warn('⚠️  Supabase offline. Retornando NPCs mockados.');
-      const mockNPCs = getMockNPCs().filter(npc => npc.countryId === countryId);
-      return res.json({ npcs: mockNPCs, _isOffline: true });
-    }
-    
-    const npcs = await npcService.getNPCsByCountry(countryId);
-    res.json({ npcs });
-  } catch (error) {
-    // ✅ Em caso de erro, retornar dados mockados em vez de erro 500
-    console.error('Erro ao buscar NPCs:', error.message);
-    const mockNPCs = getMockNPCs().filter(npc => npc.countryId === req.params.countryId);
-    res.json({ npcs: mockNPCs, _isOffline: true, error: error.message });
-  }
-};
-
-export const processNPCsMovement = async (req, res) => {
-  try {
-    // ✅ Verificar se banco está conectado
-    if (!checkConnection()) {
-      return res.json({
-        success: true,
-        updated: 0,
-        idleProcessed: 0,
-        npcs: [],
-        message: 'Modo offline - movimento não processado',
-        _isOffline: true
-      });
-    }
-    
-    const result = await npcService.processAllNPCsMovement();
-    res.json({
-      success: true,
-      ...result,
-      message: 'Movimento de NPCs processado'
-    });
-  } catch (error) {
-    // ✅ Retornar resposta vazia em vez de erro
-    console.error('Erro ao processar movimento:', error.message);
-    res.json({
-      success: true,
-      updated: 0,
-      idleProcessed: 0,
-      npcs: [],
-      message: 'Erro ao processar movimento (modo offline)',
-      _isOffline: true
-    });
-  }
-};
-
+/**
+ * ✅ FASE 18.5: Obter todos os NPCs
+ * ✅ FASE 19.2: Suporte para filtro por Bounding Box (viewport) para performance
+ */
 export const getAllNPCs = async (req, res) => {
   try {
-    // ✅ Verificar se banco está conectado
-    if (!checkConnection()) {
-      console.warn('⚠️  Supabase offline. Retornando NPCs mockados.');
-      const mockNPCs = getMockNPCs();
-      return res.json({ npcs: mockNPCs, _isOffline: true });
-    }
+    const { countryId, cityId, routineState, minLat, maxLat, minLng, maxLng } = req.query;
     
-    const npcs = await npcService.getAllNPCs();
+    let npcs = [];
+    if (cityId) {
+      npcs = await npcRepository.findByCityId(cityId);
+    } else if (countryId) {
+      npcs = await npcRepository.findByCountryId(countryId);
+    } else if (routineState) {
+      npcs = await npcRepository.findByRoutineState(routineState);
+    } else {
+      npcs = await npcRepository.find({});
+    }
+
+    // ✅ FASE 19.2: Filtrar NPCs dentro do Bounding Box (viewport) se fornecido
+    if (minLat !== undefined && maxLat !== undefined && minLng !== undefined && maxLng !== undefined) {
+      const bboxMinLat = parseFloat(minLat);
+      const bboxMaxLat = parseFloat(maxLat);
+      const bboxMinLng = parseFloat(minLng);
+      const bboxMaxLng = parseFloat(maxLng);
+
+      npcs = npcs.filter(npc => {
+        const lat = npc.positionLat || npc.position?.lat;
+        const lng = npc.positionLng || npc.position?.lng;
+        
+        if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+          return false;
+        }
+
+        // Verificar se está dentro do bounding box
+        return lat >= bboxMinLat && lat <= bboxMaxLat &&
+               lng >= bboxMinLng && lng <= bboxMaxLng;
+      });
+
+      logger.debug(`Filtrados ${npcs.length} NPCs dentro do viewport (${bboxMinLat}, ${bboxMinLng}) - (${bboxMaxLat}, ${bboxMaxLng})`);
+    }
+
     res.json({ npcs });
   } catch (error) {
-    // ✅ Em caso de erro, retornar dados mockados em vez de erro 500
-    console.error('Erro ao buscar todos os NPCs:', error.message);
-    const mockNPCs = getMockNPCs();
-    res.json({ npcs: mockNPCs, _isOffline: true, error: error.message });
+    // ✅ FASE 19.1: Fallback - retornar array vazio se falhar
+    logger.error('Erro ao obter NPCs:', error);
+    res.status(500).json({ npcs: [], error: error.message });
   }
 };
 
-export const createInitialNPCs = async (req, res) => {
+/**
+ * ✅ FASE 18.5: Obter NPC por ID
+ */
+export const getNPCById = async (req, res) => {
   try {
-    const { countryId, countryName, count = 5 } = req.body;
-
-    if (!countryId || !countryName) {
-      return res.status(400).json({ error: 'countryId e countryName são obrigatórios' });
+    const { npcId } = req.params;
+    const npc = await npcRepository.findByNPCId(npcId);
+    
+    if (!npc) {
+      return res.status(404).json({ error: 'NPC não encontrado' });
     }
 
-    // Obter centro aproximado do país (será melhorado depois com GeoJSON)
-    // Por enquanto, usar coordenadas genéricas baseadas no countryId
-    const hash = countryId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const baseLat = (hash % 180) - 90;
-    const baseLng = ((hash * 7) % 360) - 180;
+    res.json({ npc });
+  } catch (error) {
+    logger.error(`Erro ao obter NPC ${req.params.npcId}:`, error);
+    res.status(500).json({ error: error.message });
+  }
+};
 
-    // Verificar se já existem NPCs neste país
-    const existingNPCs = await npcService.getNPCsByCountry(countryId);
-    if (existingNPCs.length > 0) {
-      return res.json({
-        success: true,
-        created: 0,
-        message: `Já existem ${existingNPCs.length} NPCs em ${countryName}`,
-        npcs: existingNPCs.length
-      });
+/**
+ * ✅ FASE 18.5: Criar NPC em uma cidade
+ */
+export const createNPC = async (req, res) => {
+  try {
+    const { cityId, name } = req.body;
+
+    if (!cityId) {
+      return res.status(400).json({ error: 'cityId é obrigatório' });
     }
 
-    let created = 0;
-    for (let i = 0; i < count; i++) {
-      // Criar NPCs em posições aleatórias próximas ao centro do país
-      const randomOffsetLat = (Math.random() - 0.5) * 5; // ~5 graus de variação
-      const randomOffsetLng = (Math.random() - 0.5) * 5;
-      const position = {
-        lat: baseLat + randomOffsetLat,
-        lng: baseLng + randomOffsetLng
-      };
+    const npc = await npcService.createNPCInCity(cityId, name);
+    res.status(201).json({ success: true, npc, message: 'NPC criado com sucesso!' });
+  } catch (error) {
+    logger.error('Erro ao criar NPC:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
 
-      try {
-        await npcService.createNPC(countryId, countryName, null, position);
-        created++;
-      } catch (error) {
-        console.error(`Erro ao criar NPC ${i + 1}:`, error);
-      }
-    }
+/**
+ * ✅ FASE 18.5: Obter NPCs de uma cidade
+ */
+export const getNPCsByCity = async (req, res) => {
+  try {
+    const { cityId } = req.params;
+    const npcs = await npcRepository.findByCityId(cityId);
+    res.json({ npcs });
+  } catch (error) {
+    logger.error(`Erro ao obter NPCs da cidade ${req.params.cityId}:`, error);
+    res.status(500).json({ error: error.message });
+  }
+};
 
+/**
+ * ✅ FASE 18.5: Obter hora virtual atual
+ */
+export const getVirtualHour = async (req, res) => {
+  try {
+    const virtualHour = npcService.getVirtualHour();
+    const isDay = npcService.isDayTime(virtualHour);
+    const isWorkTime = npcService.isWorkTime(virtualHour);
+    
     res.json({
-      success: true,
-      created,
-      message: `Criados ${created} NPCs iniciais para ${countryName}`
+      virtualHour,
+      isDay,
+      isWorkTime,
+      workStartHour: 8,
+      workEndHour: 18
     });
   } catch (error) {
+    logger.error('Erro ao obter hora virtual:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * ✅ FASE 19.2: Obter NPCs dentro do bounding box (viewport do mapa)
+ * Filtra NPCs visíveis no campo de visão do jogador para reduzir payload do Socket.io
+ */
+export const getNPCsByBoundingBox = async (req, res) => {
+  try {
+    const { minLat, minLng, maxLat, maxLng } = req.query;
+
+    if (!minLat || !minLng || !maxLat || !maxLng) {
+      return res.status(400).json({ error: 'Parâmetros de bounding box são obrigatórios (minLat, minLng, maxLat, maxLng)' });
+    }
+
+    const bbox = {
+      minLat: parseFloat(minLat),
+      minLng: parseFloat(minLng),
+      maxLat: parseFloat(maxLat),
+      maxLng: parseFloat(maxLng)
+    };
+
+    // Validar bounding box
+    if (isNaN(bbox.minLat) || isNaN(bbox.minLng) || isNaN(bbox.maxLat) || isNaN(bbox.maxLng)) {
+      return res.status(400).json({ error: 'Parâmetros de bounding box inválidos' });
+    }
+
+    // Buscar todos os NPCs (ou filtrar por cidade/país se fornecido)
+    const { cityId, countryId } = req.query;
+    let allNPCs = [];
+    
+    if (cityId) {
+      allNPCs = await npcRepository.findByCityId(cityId);
+    } else if (countryId) {
+      allNPCs = await npcRepository.findByCountryId(countryId);
+    } else {
+      allNPCs = await npcRepository.find({});
+    }
+
+    // Filtrar NPCs dentro do bounding box
+    const visibleNPCs = allNPCs.filter(npc => {
+      const lat = npc.positionLat || npc.position?.lat;
+      const lng = npc.positionLng || npc.position?.lng;
+
+      if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+        return false;
+      }
+
+      return lat >= bbox.minLat && lat <= bbox.maxLat &&
+             lng >= bbox.minLng && lng <= bbox.maxLng;
+    });
+
+    logger.debug(`NPCs filtrados: ${visibleNPCs.length} de ${allNPCs.length} (bbox: ${bbox.minLat},${bbox.minLng} a ${bbox.maxLat},${bbox.maxLng})`);
+
+    res.json({ npcs: visibleNPCs, total: allNPCs.length, visible: visibleNPCs.length });
+  } catch (error) {
+    logger.error('Erro ao obter NPCs por bounding box:', error);
     res.status(500).json({ error: error.message });
   }
 };

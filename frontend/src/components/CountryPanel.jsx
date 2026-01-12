@@ -9,10 +9,12 @@ import MissionsPanel from './MissionsPanel';
 import InvestmentHistory from './InvestmentHistory';
 import DefenseInfo from './DefenseInfo';
 import BuildingModal from './BuildingModal';
+import UrbanMetricsDashboard from './UrbanMetricsDashboard';
+import PropertyMarketplace from './PropertyMarketplace';
+import PropertyHistory from './PropertyHistory';
 import { isValidCountryId } from '../utils/countryUtils';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { API_BASE_URL } from '../config/api';
 
 export default function CountryPanel({ country, onClose }) {
   const [showInvestmentModal, setShowInvestmentModal] = useState(false);
@@ -23,12 +25,40 @@ export default function CountryPanel({ country, onClose }) {
   const [economicData, setEconomicData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showBuildingModal, setShowBuildingModal] = useState(false);
+  const [selectedCityId, setSelectedCityId] = useState(null);
+  const [userBuildings, setUserBuildings] = useState([]);
+  const [showMarketplace, setShowMarketplace] = useState(false); // ✅ FASE 18.6: Estado para marketplace
 
   useEffect(() => {
     if (country) {
       loadCountryData();
+      loadUserBuildings();
     }
   }, [country]);
+
+  const loadUserBuildings = async () => {
+    try {
+      const userId = localStorage.getItem('userId') || 'test-user-id';
+      const response = await fetchWithTimeout(
+        `${API_BASE_URL}/buildings/user/${userId}?countryId=${country.id}`,
+        {},
+        3000
+      ).catch(() => null);
+
+      if (response?.ok) {
+        const data = await response.json();
+        const buildings = data.buildings || data || [];
+        setUserBuildings(buildings);
+        
+        // Se houver edifícios, usar a cidade do primeiro edifício para mostrar métricas
+        if (buildings.length > 0 && buildings[0].cityId) {
+          setSelectedCityId(buildings[0].cityId);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao carregar edifícios:', error);
+    }
+  };
 
   const loadCountryData = async () => {
     if (!country) return;
@@ -36,10 +66,10 @@ export default function CountryPanel({ country, onClose }) {
     setLoading(true);
     try {
       const [ownershipRes, economicRes, treasuryRes, economicDataRes] = await Promise.all([
-        fetchWithTimeout(`${API_URL}/ownership/${country.id}/info`, {}, 3000).catch(() => null),
-        fetchWithTimeout(`${API_URL}/economic/${country.id}`, {}, 3000).catch(() => null),
-        fetchWithTimeout(`${API_URL}/treasury/${country.id}`, {}, 3000).catch(() => null),
-        fetchWithTimeout(`${API_URL}/countries/${country.id}/economic`, {}, 3000).catch(() => null)
+        fetchWithTimeout(`${API_BASE_URL}/ownership/${country.id}/info`, {}, 3000).catch(() => null),
+        fetchWithTimeout(`${API_BASE_URL}/economic/${country.id}`, {}, 3000).catch(() => null),
+        fetchWithTimeout(`${API_BASE_URL}/treasury/${country.id}`, {}, 3000).catch(() => null),
+        fetchWithTimeout(`${API_BASE_URL}/countries/${country.id}/economic`, {}, 3000).catch(() => null)
       ]);
 
       if (ownershipRes?.ok) {
@@ -74,6 +104,7 @@ export default function CountryPanel({ country, onClose }) {
 
   const handleInvestmentSuccess = () => {
     loadCountryData();
+    loadUserBuildings();
   };
 
   if (!country) {
@@ -232,6 +263,35 @@ export default function CountryPanel({ country, onClose }) {
           {/* Informações de Defesa */}
           <DefenseInfo countryId={country.id} />
 
+          {/* ✅ FASE 18.5: Dashboard de Métricas Urbanas */}
+          {userBuildings.length > 0 && (
+            <div className="bg-gray-700 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">Cidades com Edifícios</h3>
+              <select
+                value={selectedCityId || ''}
+                onChange={(e) => setSelectedCityId(e.target.value)}
+                className="w-full bg-gray-600 text-white rounded-lg p-2 text-sm mb-3"
+              >
+                <option value="">Selecione uma cidade</option>
+                {Array.from(new Set(userBuildings.map(b => b.cityId).filter(Boolean))).map(cityId => {
+                  const building = userBuildings.find(b => b.cityId === cityId);
+                  return (
+                    <option key={cityId} value={cityId}>
+                      {building?.cityName || cityId} ({userBuildings.filter(b => b.cityId === cityId).length} edifícios)
+                    </option>
+                  );
+                })}
+              </select>
+              
+              {selectedCityId && (
+                <UrbanMetricsDashboard 
+                  cityId={selectedCityId} 
+                  cityName={userBuildings.find(b => b.cityId === selectedCityId)?.cityName || 'Cidade'}
+                />
+              )}
+            </div>
+          )}
+
           {/* Lista de acionistas */}
           {ownershipInfo && (
             <div className="bg-gray-700 rounded-lg p-4">
@@ -331,6 +391,13 @@ export default function CountryPanel({ country, onClose }) {
             handleInvestmentSuccess(); // Recarregar dados
             setShowBuildingModal(false);
           }}
+        />
+      )}
+
+      {/* ✅ FASE 18.6: Modal de Marketplace Imobiliário */}
+      {showMarketplace && (
+        <PropertyMarketplace
+          onClose={() => setShowMarketplace(false)}
         />
       )}
     </>

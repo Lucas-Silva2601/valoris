@@ -37,6 +37,17 @@ export class BuildingRepository extends BaseRepository {
     if (building.country_id !== undefined) data.country_id = building.country_id;
     if (building.countryName !== undefined) data.country_name = building.countryName;
     if (building.country_name !== undefined) data.country_name = building.country_name;
+    // ✅ FASE 18: Campos hierárquicos
+    if (building.stateId !== undefined) data.state_id = building.stateId;
+    if (building.state_id !== undefined) data.state_id = building.state_id;
+    if (building.stateName !== undefined) data.state_name = building.stateName;
+    if (building.state_name !== undefined) data.state_name = building.state_name;
+    if (building.cityId !== undefined) data.city_id = building.cityId;
+    if (building.city_id !== undefined) data.city_id = building.city_id;
+    if (building.cityName !== undefined) data.city_name = building.cityName;
+    if (building.city_name !== undefined) data.city_name = building.city_name;
+    if (building.lotId !== undefined) data.lot_id = building.lotId;
+    if (building.lot_id !== undefined) data.lot_id = building.lot_id;
     if (building.type !== undefined) data.type = building.type;
     if (building.name !== undefined) data.name = building.name;
     
@@ -54,6 +65,9 @@ export class BuildingRepository extends BaseRepository {
     if (building.capacity !== undefined) data.capacity = building.capacity;
     if (building.revenuePerHour !== undefined) data.revenue_per_hour = building.revenuePerHour;
     if (building.revenue_per_hour !== undefined) data.revenue_per_hour = building.revenue_per_hour;
+    // ✅ FASE 18: Campo yield_rate (taxa de retorno)
+    if (building.yieldRate !== undefined) data.yield_rate = parseFloat(building.yieldRate);
+    if (building.yield_rate !== undefined) data.yield_rate = parseFloat(building.yield_rate);
     if (building.condition !== undefined) data.condition = building.condition;
     
     return data;
@@ -92,6 +106,17 @@ export class BuildingRepository extends BaseRepository {
       country_id: record.country_id, // ✅ Manter ambos os formatos
       countryName: record.country_name,
       country_name: record.country_name, // ✅ Manter ambos os formatos
+      // ✅ FASE 18: Campos hierárquicos
+      stateId: record.state_id,
+      state_id: record.state_id,
+      stateName: record.state_name,
+      state_name: record.state_name,
+      cityId: record.city_id,
+      city_id: record.city_id,
+      cityName: record.city_name,
+      city_name: record.city_name,
+      lotId: record.lot_id,
+      lot_id: record.lot_id,
       type: record.type,
       name: record.name || `${record.type || 'Edifício'} Nível ${record.level || 1}`,
       level: record.level || 1,
@@ -99,6 +124,8 @@ export class BuildingRepository extends BaseRepository {
       cost: record.cost || 0,
       revenuePerHour: record.revenue_per_hour || 0,
       revenue_per_hour: record.revenue_per_hour || 0, // ✅ Manter ambos os formatos
+      yieldRate: parseFloat(record.yield_rate || 0), // ✅ FASE 18: Taxa de retorno
+      yield_rate: parseFloat(record.yield_rate || 0),
       condition: record.condition || 100,
       position: position,
       position_lat: record.position_lat, // ✅ Manter ambos os formatos
@@ -132,6 +159,22 @@ export class BuildingRepository extends BaseRepository {
    */
   async findByCountryId(countryId) {
     const records = await this.find({ country_id: countryId });
+    return records.map(record => this.formatFromSupabase(record));
+  }
+
+  /**
+   * ✅ FASE 18: Buscar por state_id
+   */
+  async findByStateId(stateId) {
+    const records = await this.find({ state_id: stateId });
+    return records.map(record => this.formatFromSupabase(record));
+  }
+
+  /**
+   * ✅ FASE 18: Buscar por city_id
+   */
+  async findByCityId(cityId) {
+    const records = await this.find({ city_id: cityId });
     return records.map(record => this.formatFromSupabase(record));
   }
 

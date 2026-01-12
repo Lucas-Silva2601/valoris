@@ -1,21 +1,15 @@
 import express from 'express';
 import * as npcController from '../controllers/npcController.js';
-import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Obter NPCs de um país (público)
-router.get('/country/:countryId', npcController.getNPCsByCountry);
-
-// Obter TODOS os NPCs (público - para mostrar no mapa)
-// FASE DE TESTE: Sem autenticação obrigatória
-router.get('/all', npcController.getAllNPCs);
-
-// Processar movimento de NPCs (pode ser chamado por job)
-router.post('/process-movement', npcController.processNPCsMovement);
-
-// Criar NPCs iniciais para um país (requer autenticação)
-router.post('/create-initial', authenticate, npcController.createInitialNPCs);
+// ✅ FASE 18.5: Rotas para NPCs
+router.get('/', npcController.getAllNPCs);
+router.get('/virtual-hour', npcController.getVirtualHour);
+router.get('/bounding-box', npcController.getNPCsByBoundingBox); // ✅ FASE 19.2: NPCs por bounding box
+router.get('/city/:cityId', npcController.getNPCsByCity);
+router.get('/:npcId', npcController.getNPCById);
+router.post('/', npcController.createNPC);
 
 export default router;
 
