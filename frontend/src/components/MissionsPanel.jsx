@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function MissionsPanel() {
   const [missions, setMissions] = useState([]);
@@ -26,7 +27,7 @@ export default function MissionsPanel() {
       }
 
       const response = await fetchWithTimeout(
-        `${API_URL}${endpoint}`,
+        `${await getApiUrl()}${endpoint}`,
         { headers: filter === 'available' ? {} : headers },
         3000
       );
@@ -48,7 +49,7 @@ export default function MissionsPanel() {
   const handleAcceptMission = async (missionId) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/missions/${missionId}/accept`, {
+      const response = await fetch(`${await getApiUrl()}/missions/${missionId}/accept`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

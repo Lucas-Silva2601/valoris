@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { getApiUrl } from '../config/api';
 import { useNavigate } from 'react-router-dom';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -26,7 +27,7 @@ export default function LoginPage() {
         ? { email: formData.email, password: formData.password }
         : formData;
 
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const response = await fetch(`${await getApiUrl()}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function WalletDisplay() {
   const [balance, setBalance] = useState(0);
@@ -28,8 +29,8 @@ export default function WalletDisplay() {
       }
 
       const [balanceRes, transactionsRes] = await Promise.all([
-        fetchWithTimeout(`${API_URL}/wallet/balance`, { headers }, 3000),
-        fetchWithTimeout(`${API_URL}/wallet/transactions?limit=5`, { headers }, 3000)
+        fetchWithTimeout(`${await getApiUrl()}/wallet/balance`, { headers }, 3000),
+        fetchWithTimeout(`${await getApiUrl()}/wallet/transactions?limit=5`, { headers }, 3000)
       ]);
 
       if (balanceRes.ok) {
@@ -84,7 +85,7 @@ export default function WalletDisplay() {
                   'user-id': userId
                 };
                 
-                const res = await fetchWithTimeout(`${API_URL}/wallet/faucet`, {
+                const res = await fetchWithTimeout(`${await getApiUrl()}/wallet/faucet`, {
                   method: 'POST',
                   headers
                 }, 5000);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { Line, Bar, Doughnut } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -25,7 +26,7 @@ ChartJS.register(
   Legend
 );
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function AnalyticsDashboard() {
   const [stats, setStats] = useState(null);
@@ -59,8 +60,8 @@ export default function AnalyticsDashboard() {
       }
 
       const [statsRes, metricsRes] = await Promise.all([
-        fetch(`${API_URL}/analytics/stats`, { headers }),
-        fetch(`${API_URL}/analytics/metrics/period?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`, { headers })
+        fetch(`${await getApiUrl()}/analytics/stats`, { headers }),
+        fetch(`${await getApiUrl()}/analytics/metrics/period?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`, { headers })
       ]);
 
       if (statsRes.ok) {

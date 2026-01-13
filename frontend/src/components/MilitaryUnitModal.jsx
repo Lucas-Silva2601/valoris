@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function MilitaryUnitModal({ country, onClose, onSuccess }) {
   const [unitType, setUnitType] = useState('tank');
@@ -14,7 +15,7 @@ export default function MilitaryUnitModal({ country, onClose, onSuccess }) {
 
   const loadUnitStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/military/units/stats`);
+      const response = await fetch(`${await getApiUrl()}/military/units/stats`);
       if (response.ok) {
         const data = await response.json();
         setUnitStats(data.stats);
@@ -48,7 +49,7 @@ export default function MilitaryUnitModal({ country, onClose, onSuccess }) {
         'username': 'testuser'
       };
 
-      const response = await fetch(`${API_URL}/military/units`, {
+      const response = await fetch(`${await getApiUrl()}/military/units`, {
         method: 'POST',
         headers,
         body: JSON.stringify({

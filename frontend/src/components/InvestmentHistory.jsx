@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function InvestmentHistory() {
   const [transactions, setTransactions] = useState([]);
@@ -13,7 +14,7 @@ export default function InvestmentHistory() {
   const loadHistory = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/wallet/transactions?limit=20`, {
+      const response = await fetch(`${await getApiUrl()}/wallet/transactions?limit=20`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function UnitsList() {
   const [units, setUnits] = useState([]);
@@ -21,7 +22,7 @@ export default function UnitsList() {
         'username': 'testuser'
       };
 
-      const response = await fetch(`${API_URL}/military/units`, { headers });
+      const response = await fetch(`${await getApiUrl()}/military/units`, { headers });
       if (response.ok) {
         const data = await response.json();
         setUnits(data.units || []);

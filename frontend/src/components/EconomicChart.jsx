@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function EconomicChart({ countryId }) {
   const [history, setHistory] = useState([]);
@@ -14,7 +15,7 @@ export default function EconomicChart({ countryId }) {
 
   const loadHistory = async () => {
     try {
-      const response = await fetch(`${API_URL}/economic/${countryId}`);
+      const response = await fetch(`${await getApiUrl()}/economic/${countryId}`);
       if (response.ok) {
         const data = await response.json();
         setHistory(data.history || []);

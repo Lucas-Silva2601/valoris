@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function ShareholdersList({ countryId }) {
   const [shareholders, setShareholders] = useState([]);
@@ -15,7 +16,7 @@ export default function ShareholdersList({ countryId }) {
   const loadShareholders = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/ownership/${countryId}/shareholders`);
+      const response = await fetch(`${await getApiUrl()}/ownership/${countryId}/shareholders`);
       
       if (response.ok) {
         const data = await response.json();

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 /**
  * PAINEL DE MODO DEUS - PARA TESTES
@@ -26,7 +27,7 @@ export default function GodModePanel({ userId: currentUserId, onBalanceUpdate })
     try {
       setLoading(true);
       const response = await fetchWithTimeout(
-        `${API_URL}/admin/users`,
+        `${await getApiUrl()}/admin/users`,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -62,7 +63,7 @@ export default function GodModePanel({ userId: currentUserId, onBalanceUpdate })
         : { userId: targetUserId, amount, reason };
 
       const response = await fetchWithTimeout(
-        `${API_URL}${endpoint}`,
+        `${await getApiUrl()}${endpoint}`,
         {
           method: 'POST',
           headers: {

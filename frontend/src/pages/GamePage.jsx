@@ -169,8 +169,9 @@ export default function GamePage() {
         headers['Authorization'] = `Bearer ${token}`;
       }
       
+      const apiUrl = await getApiUrl();
       const response = await fetchWithTimeout(
-        `${API_BASE_URL}/military/units`,
+        `${apiUrl}/military/units`,
         { headers },
         3000
       );
@@ -193,8 +194,9 @@ export default function GamePage() {
   const loadBuildings = async () => {
     // Sempre carregar todos os edifícios do usuário para mostrar no mapa
     try {
+      const apiUrl = await getApiUrl();
       const userId = localStorage.getItem('userId') || 'test-user-id';
-      const response = await fetch(`${API_BASE_URL}/buildings/user/${userId}`, {
+      const response = await fetch(`${apiUrl}/buildings/user/${userId}`, {
         headers: {
           'user-id': userId
         }

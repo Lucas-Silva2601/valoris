@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function UserProfile() {
   const [profile, setProfile] = useState(null);
@@ -13,7 +14,7 @@ export default function UserProfile() {
   const loadProfile = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/profile`, {
+      const response = await fetch(`${await getApiUrl()}/profile`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

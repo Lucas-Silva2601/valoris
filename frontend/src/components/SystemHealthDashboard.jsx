@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -21,7 +22,7 @@ ChartJS.register(
   Legend
 );
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function SystemHealthDashboard() {
   const [health, setHealth] = useState(null);
@@ -44,9 +45,9 @@ export default function SystemHealthDashboard() {
       };
 
       const [healthRes, systemRes, dbRes] = await Promise.all([
-        fetch(`${API_URL}/monitoring/health`, { headers }),
-        fetch(`${API_URL}/monitoring/system`, { headers }),
-        fetch(`${API_URL}/monitoring/database`, { headers })
+        fetch(`${await getApiUrl()}/monitoring/health`, { headers }),
+        fetch(`${await getApiUrl()}/monitoring/system`, { headers }),
+        fetch(`${await getApiUrl()}/monitoring/database`, { headers })
       ]);
 
       if (healthRes.ok) {

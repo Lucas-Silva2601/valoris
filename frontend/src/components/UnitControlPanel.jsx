@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import UnitsList from './UnitsList';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function UnitControlPanel({ countryId, onUnitSelect }) {
   const [selectedUnit, setSelectedUnit] = useState(null);
@@ -12,7 +13,7 @@ export default function UnitControlPanel({ countryId, onUnitSelect }) {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/military/units/${selectedUnit.unitId}/move`, {
+      const response = await fetch(`${await getApiUrl()}/military/units/${selectedUnit.unitId}/move`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

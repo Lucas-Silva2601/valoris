@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 
 export default function DefenseInfo({ countryId }) {
   const [defenseInfo, setDefenseInfo] = useState(null);
@@ -16,7 +17,7 @@ export default function DefenseInfo({ countryId }) {
   const loadDefenseInfo = async () => {
     try {
       setLoading(true);
-      const response = await fetchWithTimeout(`${API_URL}/defense/${countryId}`, {}, 3000);
+      const response = await fetchWithTimeout(`${await getApiUrl()}/defense/${countryId}`, {}, 3000);
       
       if (response.ok) {
         const data = await response.json();
