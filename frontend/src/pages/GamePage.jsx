@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import WorldMap from '../components/WorldMap';
 import CountryPanel from '../components/CountryPanel';
 import CountrySearch from '../components/CountrySearch';
@@ -43,6 +43,12 @@ export default function GamePage() {
   const realtimeUpdates = useRealtimeUpdates(selectedCountry);
   const { toasts, removeToast, showSuccess } = useToast();
   const { socket } = useSocket();
+  
+  // ✅ CORREÇÃO: Memorizar selectedCountryFeature para evitar re-renders desnecessários
+  // Isso impede que o mapa volte ao centro toda vez que o componente renderiza
+  const selectedCountryFeature = useMemo(() => {
+    return selectedCountryData;
+  }, [selectedCountryData?.id]); // Só mudar quando o ID do país mudar
   
   // ✅ CORREÇÃO CRÍTICA: Aguardar configuração estar pronta antes de renderizar
   useEffect(() => {
@@ -475,7 +481,7 @@ export default function GamePage() {
             <WorldMap
               countriesData={countriesData}
               selectedCountry={selectedCountry}
-              selectedCountryFeature={selectedCountryData}
+              selectedCountryFeature={selectedCountryFeature}
               onCountryClick={handleCountryClick}
               onInvestmentClick={handleInvestmentClick}
               units={userUnits}

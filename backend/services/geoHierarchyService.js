@@ -61,17 +61,31 @@ export const loadStatesGeoJSON = async (countryId) => {
     const states = await stateRepository.findByCountryId(countryId);
     
     // Converter para formato GeoJSON
-    const features = states.map(state => ({
-      type: 'Feature',
-      properties: {
-        state_id: state.stateId,
-        name: state.name,
-        code: state.code,
-        country_id: state.countryId,
-        country_name: state.countryName
-      },
-      geometry: state.geometry || null
-    }));
+    const features = states
+      .filter(state => {
+        // ✅ FILTRAR estados sem geometria válida
+        if (!state.geometry) {
+          logger.warn(`⚠️  Estado ${state.name} não tem geometria, será ignorado`);
+          return false;
+        }
+        // ✅ Validar que é um objeto GeoJSON válido
+        if (!state.geometry.type || !state.geometry.coordinates) {
+          logger.warn(`⚠️  Estado ${state.name} tem geometria inválida, será ignorado`);
+          return false;
+        }
+        return true;
+      })
+      .map(state => ({
+        type: 'Feature',
+        properties: {
+          state_id: state.stateId,
+          name: state.name,
+          code: state.code,
+          country_id: state.countryId,
+          country_name: state.countryName
+        },
+        geometry: state.geometry
+      }));
 
     const geoJSON = {
       type: 'FeatureCollection',
@@ -111,20 +125,34 @@ export const loadCitiesGeoJSON = async (stateId) => {
     const cities = await cityRepository.findByStateId(stateId);
     
     // Converter para formato GeoJSON
-    const features = cities.map(city => ({
-      type: 'Feature',
-      properties: {
-        city_id: city.cityId,
-        name: city.name,
-        state_id: city.stateId,
-        state_name: city.stateName,
-        country_id: city.countryId,
-        country_name: city.countryName,
-        land_value: city.landValue,
-        population: city.population
-      },
-      geometry: city.geometry || null
-    }));
+    const features = cities
+      .filter(city => {
+        // ✅ FILTRAR cidades sem geometria válida
+        if (!city.geometry) {
+          logger.warn(`⚠️  Cidade ${city.name} não tem geometria, será ignorada`);
+          return false;
+        }
+        // ✅ Validar que é um objeto GeoJSON válido
+        if (!city.geometry.type || !city.geometry.coordinates) {
+          logger.warn(`⚠️  Cidade ${city.name} tem geometria inválida, será ignorada`);
+          return false;
+        }
+        return true;
+      })
+      .map(city => ({
+        type: 'Feature',
+        properties: {
+          city_id: city.cityId,
+          name: city.name,
+          state_id: city.stateId,
+          state_name: city.stateName,
+          country_id: city.countryId,
+          country_name: city.countryName,
+          land_value: city.landValue,
+          population: city.population
+        },
+        geometry: city.geometry
+      }));
 
     const geoJSON = {
       type: 'FeatureCollection',
@@ -307,4 +335,17 @@ export const clearGeoJSONCache = () => {
  * Obter hierarquia completa de um ponto (wrapper para compatibilidade)
  */
 export const getHierarchy = identifyHierarchy;
+
+/**
+ * ✅ FASE 20: Obter polígono de um país específico
+ */
+export const getCountryPolygon = (countryId) => {
+  const countriesGeoJSON = loadCountriesGeoJSON();
+  
+  const countryFeature = countriesGeoJSON.features.find(
+    feature => feature.properties.ISO_A3 === countryId
+  );
+  
+  return countryFeature || null;
+};
 

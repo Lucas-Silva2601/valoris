@@ -17,7 +17,19 @@
     "diagnose": "node scripts/diagnose.js",
     "check": "node scripts/diagnose.js",
     "deploy:check": "node scripts/diagnose.js",
-    "kill-ports": "npm run clean"
+    "kill-ports": "npm run clean",
+    "populate:geo": "node backend/scripts/populate-geographic-data.js",
+    "setup:geo": "node backend/scripts/populate-geographic-data.js",
+    "redistribute:npcs": "node backend/scripts/redistribute-npcs.js",
+    "fix:npc-positions": "node backend/scripts/redistribute-npcs.js",
+    "spread:npcs": "node backend/scripts/spread-npcs-simple.js",
+    "spread:worldwide": "node backend/scripts/spread-npcs-worldwide.js",
+    "spread:more": "node backend/scripts/spread-npcs-more.js",
+    "create:buildings": "node backend/scripts/create-buildings-for-npcs.js",
+    "activate:movement": "node backend/scripts/activate-npc-movement.js",
+    "reseed:npcs": "node backend/scripts/reseed-npcs-spread.js",
+    "reseed:global": "node backend/scripts/reseed-npcs-global-spread.js",
+    "spread:more": "node backend/scripts/spread-npcs-more.js"
   },
   "keywords": [
     "game",

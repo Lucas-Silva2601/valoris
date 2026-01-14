@@ -12,6 +12,7 @@ import { startRepairJob } from './jobs/repairJob.js';
 import { startAnalyticsJob } from './jobs/analyticsJob.js';
 import { startBuildingYieldJob } from './jobs/buildingYieldJob.js';
 import { startNPCRoutineJob } from './jobs/npcRoutineJob.js';
+import { startNPCMovementJob } from './jobs/npcMovementJob.js';
 import { startIntegrityCleanupJob } from './jobs/integrityCleanupJob.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { generalLimiter, authLimiter } from './middleware/rateLimiter.js';
@@ -126,6 +127,7 @@ connectDB().then(async () => {
     startAnalyticsJob();
     startBuildingYieldJob(); // ✅ FASE 18.3: Job de distribuição de yields de edifícios
     startNPCRoutineJob(); // ✅ FASE 18.5: Job de rotinas e movimento de NPCs
+    startNPCMovementJob(); // ✅ FASE 20: Job de movimento livre dos NPCs (Wander AI)
     startIntegrityCleanupJob(); // ✅ FASE 19.3: Job de limpeza de integridade referencial
     logger.info('✅ Todos os jobs agendados iniciados');
   } else {

@@ -32,27 +32,69 @@ L.Marker.prototype.options.icon = DefaultIcon;
 // Componente para ajustar o mapa quando necessário
 function MapController({ center, zoom, selectedFeature, onZoomChange, socket }) {
   const map = useMap();
+  const lastZoomedFeatureRef = useRef(null);
+  const userInteractedRef = useRef(false);
   
+  // Helper para extrair ID do país
+  const getFeatureId = (feature) => {
+    if (!feature || !feature.properties) return null;
+    return feature.properties.ISO_A3 || 
+           feature.properties.ADM0_A3 || 
+           feature.properties.iso_a3 || 
+           feature.properties.countryId;
+  };
+  
+  // ❌ REMOVIDO: Não mais forçar setView baseado em center/zoom
+  // O mapa deve respeitar a interação do usuário
+  
+  // Detectar quando o usuário interage manualmente com o mapa
   useEffect(() => {
-    if (center && zoom) {
-      map.setView(center, zoom);
-    }
-  }, [center, zoom, map]);
+    const handleUserInteraction = () => {
+      userInteractedRef.current = true;
+    };
+    
+    map.on('dragstart', handleUserInteraction);
+    map.on('zoomstart', handleUserInteraction);
+    
+    return () => {
+      map.off('dragstart', handleUserInteraction);
+      map.off('zoomstart', handleUserInteraction);
+    };
+  }, [map]);
 
-  // Zoom automático quando um país é selecionado
+  // ✅ Zoom automático APENAS quando um NOVO país é selecionado
+  // E APENAS se o usuário não estiver interagindo manualmente
   useEffect(() => {
     if (selectedFeature && selectedFeature.geometry) {
-      try {
-        const polygon = turf.feature(selectedFeature.geometry);
-        const bbox = turf.bbox(polygon);
-        const bounds = [
-          [bbox[1], bbox[0]], // [lat, lng] southwest
-          [bbox[3], bbox[2]]  // [lat, lng] northeast
-        ];
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
-      } catch (error) {
-        console.error('Erro ao fazer zoom no país:', error);
+      const featureId = getFeatureId(selectedFeature);
+      
+      // ✅ Só dar zoom se for um país DIFERENTE do último
+      if (featureId && featureId !== lastZoomedFeatureRef.current) {
+        try {
+          const polygon = turf.feature(selectedFeature.geometry);
+          const bbox = turf.bbox(polygon);
+          const bounds = [
+            [bbox[1], bbox[0]], // [lat, lng] southwest
+            [bbox[3], bbox[2]]  // [lat, lng] northeast
+          ];
+          
+          // ✅ Dar zoom APENAS no primeiro clique
+          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
+          lastZoomedFeatureRef.current = featureId;
+          
+          // Resetar flag de interação depois de 500ms
+          setTimeout(() => {
+            userInteractedRef.current = false;
+          }, 500);
+          
+          console.log(`🔍 Zoom no país: ${featureId}`);
+        } catch (error) {
+          console.error('Erro ao fazer zoom no país:', error);
+        }
       }
+    } else {
+      // Se nenhum país selecionado, resetar
+      lastZoomedFeatureRef.current = null;
     }
   }, [selectedFeature, map]);
 
@@ -196,11 +238,12 @@ export default function WorldMap({
     const countryId = getCountryId(feature) || 'UNK';
     const baseColor = getCountryColor(countryId);
     
-    // Estilo para país selecionado
+    // ✅ FASE 19.4: Estilo para país selecionado com TRANSPARÊNCIA ALTA
+    // Permite ver o mapa base, estados e NPCs por baixo
     if (selectedCountry && countryId === selectedCountry) {
       return {
         fillColor: '#fbbf24',
-        fillOpacity: 0.7,
+        fillOpacity: 0.2, // ⚠️ Transparência ALTA (de 0.7 para 0.2) - FIM DA TELA AMARELA!
         color: '#f59e0b',
         weight: 3,
         opacity: 1
@@ -211,17 +254,17 @@ export default function WorldMap({
     if (hoveredCountry && countryId === hoveredCountry) {
       return {
         fillColor: baseColor,
-        fillOpacity: 0.95,
+        fillOpacity: 0.5, // ✅ Transparência média no hover para ver o que está dentro
         color: '#ffffff',
         weight: 2.5,
         opacity: 1
       };
     }
     
-    // Estilo padrão - cada país com sua cor única (mapa político sólido)
+    // Estilo padrão - cada país com sua cor única (mapa político com transparência)
     return {
       fillColor: baseColor,
-      fillOpacity: 0.9, // Muito opaco para parecer mapa político sólido
+      fillOpacity: 0.6, // ✅ Transparência moderada para ver o mapa base
       color: '#ffffff',
       weight: 1.5,
       opacity: 1

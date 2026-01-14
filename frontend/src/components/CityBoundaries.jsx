@@ -13,9 +13,9 @@ export default function CityBoundaries({ stateId, zoom }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Mostrar cidades apenas em zoom >= 10
-    // ✅ Validar stateId antes de fazer requisição
-    if (zoom < 10 || !stateId || stateId === 'undefined' || stateId === 'null') {
+    // ✅ FASE 19.4: REMOVER RESTRIÇÃO DE ZOOM - Mostrar cidades desde qualquer zoom
+    // Validar apenas se stateId existe
+    if (!stateId || stateId === 'undefined' || stateId === 'null') {
       setCitiesGeoJSON(null);
       return;
     }
@@ -45,16 +45,36 @@ export default function CityBoundaries({ stateId, zoom }) {
             // Se vier array, converter para FeatureCollection
             const features = data
               .filter(city => city.geometry)
-              .map(city => ({
-                type: 'Feature',
-                properties: {
-                  name: city.name,
-                  cityId: city.cityId || city.city_id,
-                  population: city.population || 0,
-                  landValue: city.landValue || city.land_value || 0
-                },
-                geometry: typeof city.geometry === 'string' ? JSON.parse(city.geometry) : city.geometry
-              }));
+              .map(city => {
+                try {
+                  // Parse geometry se for string
+                  let geometry = city.geometry;
+                  if (typeof geometry === 'string') {
+                    geometry = JSON.parse(geometry);
+                  }
+                  
+                  // Validar que é um objeto válido
+                  if (!geometry || !geometry.type || !geometry.coordinates) {
+                    console.warn(`⚠️ Geometria inválida para cidade ${city.name}`);
+                    return null;
+                  }
+                  
+                  return {
+                    type: 'Feature',
+                    properties: {
+                      name: city.name,
+                      cityId: city.cityId || city.city_id,
+                      population: city.population || 0,
+                      landValue: city.landValue || city.land_value || 0
+                    },
+                    geometry
+                  };
+                } catch (err) {
+                  console.error(`❌ Erro ao processar geometria da cidade ${city.name}:`, err);
+                  return null;
+                }
+              })
+              .filter(feature => feature !== null); // Remover features inválidas
             
             geoJSON = {
               type: 'FeatureCollection',
@@ -97,26 +117,27 @@ export default function CityBoundaries({ stateId, zoom }) {
     const population = feature.properties?.population || 0;
     const landValue = feature.properties?.landValue || 0;
     
+    // ✅ FASE 19.4: Estilo visível em qualquer zoom
     // Cor baseada na população e land_value
     let fillColor = '#10B981'; // Verde padrão
-    let opacity = 0.15;
+    let opacity = 0.2; // ✅ Mais visível de longe
     
     if (population > 1000) {
       fillColor = '#F59E0B'; // Laranja para cidades grandes
-      opacity = 0.2;
+      opacity = 0.25;
     }
     if (landValue > 5000) {
       fillColor = '#EF4444'; // Vermelho para áreas caras
-      opacity = 0.25;
+      opacity = 0.3;
     }
     
     return {
       fillColor,
       fillOpacity: opacity,
       color: '#059669',
-      weight: 1.5,
-      opacity: 0.5,
-      dashArray: '3, 3'
+      weight: 1.2, // ✅ Bordas mais finas para não poluir
+      opacity: 0.6,
+      dashArray: '2, 2' // ✅ Padrão tracejado mais discreto
     };
   };
 

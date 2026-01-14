@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import GamePage from './pages/GamePage';
 import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
+import './styles/npc-animations.css'; // ✅ FASE 19.4: Animações suaves de NPCs
 
 const ProtectedRoute = ({ children }) => {
   return children;

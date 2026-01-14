@@ -125,6 +125,17 @@ export class NPCRepository extends BaseRepository {
     };
   }
 
+  // ✅ Sobrescrever formatRecord do BaseRepository para usar formatFromSupabase
+  formatRecord(record) {
+    return this.formatFromSupabase(record);
+  }
+
+  // ✅ Sobrescrever formatRecords do BaseRepository para usar formatFromSupabase
+  formatRecords(records) {
+    if (!records || !Array.isArray(records)) return [];
+    return records.map(record => this.formatFromSupabase(record));
+  }
+
   async create(npc) {
     const data = this.formatToSupabase(npc);
     const record = await super.create(data);

@@ -394,6 +394,7 @@ export default function BuildingMarkers({ countryId, buildings = [] }) {
           key={buildingId}
           position={position}
           icon={createBuildingIcon(building.type, building.level || 1, buildingId)}
+          zIndexOffset={900}
         >
           <Popup>
             <div className="text-sm">

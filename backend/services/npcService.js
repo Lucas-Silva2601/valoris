@@ -492,6 +492,18 @@ export const processAllNPCs = async () => {
     const allNPCs = await npcRepository.find({});
     logger.info(`🔄 Processando ${allNPCs.length} NPCs...`);
 
+    // 🔍 DEBUG: Mostrar exemplo de NPC para diagnóstico
+    if (allNPCs.length > 0) {
+      const exemploNPC = allNPCs[0];
+      logger.debug(`🔍 Exemplo de NPC (primeiro da lista):`);
+      logger.debug(`   ID: ${exemploNPC.id}`);
+      logger.debug(`   Nome: ${exemploNPC.name}`);
+      logger.debug(`   cityId: ${exemploNPC.cityId} (tipo: ${typeof exemploNPC.cityId})`);
+      logger.debug(`   positionLat: ${exemploNPC.positionLat} (tipo: ${typeof exemploNPC.positionLat})`);
+      logger.debug(`   positionLng: ${exemploNPC.positionLng} (tipo: ${typeof exemploNPC.positionLng})`);
+      logger.debug(`   Campos disponíveis: ${Object.keys(exemploNPC).join(', ')}`);
+    }
+
     let processed = 0;
     let skippedNoCity = 0;
     let errors = 0;

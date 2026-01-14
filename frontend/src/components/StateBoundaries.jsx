@@ -15,9 +15,9 @@ export default function StateBoundaries({ countryId, zoom }) {
   const map = useMap();
 
   useEffect(() => {
-    // Mostrar estados apenas em zoom >= 6
-    // ✅ Validar countryId antes de fazer requisição
-    if (zoom < 6 || !countryId || countryId === 'undefined' || countryId === 'null') {
+    // ✅ FASE 19.4: REMOVER RESTRIÇÃO DE ZOOM - Mostrar estados desde o zoom 2 (visão global)
+    // Validar apenas se countryId existe
+    if (!countryId || countryId === 'undefined' || countryId === 'null') {
       setStatesGeoJSON(null);
       return;
     }
@@ -37,6 +37,7 @@ export default function StateBoundaries({ countryId, zoom }) {
         const response = await fetch(`${API_BASE_URL}/geography/states/${countryId}`);
         if (response.ok) {
           const data = await response.json();
+          console.log(`🗺️  Estados carregados para ${countryId}:`, data);
           
           let geoJSON = null;
           
@@ -47,15 +48,35 @@ export default function StateBoundaries({ countryId, zoom }) {
             // Se vier array, converter para FeatureCollection
             const features = data
               .filter(state => state.geometry)
-              .map(state => ({
-                type: 'Feature',
-                properties: {
-                  name: state.name,
-                  stateId: state.stateId || state.state_id,
-                  code: state.code
-                },
-                geometry: typeof state.geometry === 'string' ? JSON.parse(state.geometry) : state.geometry
-              }));
+              .map(state => {
+                try {
+                  // Parse geometry se for string
+                  let geometry = state.geometry;
+                  if (typeof geometry === 'string') {
+                    geometry = JSON.parse(geometry);
+                  }
+                  
+                  // Validar que é um objeto válido
+                  if (!geometry || !geometry.type || !geometry.coordinates) {
+                    console.warn(`⚠️ Geometria inválida para estado ${state.name}`);
+                    return null;
+                  }
+                  
+                  return {
+                    type: 'Feature',
+                    properties: {
+                      name: state.name,
+                      stateId: state.stateId || state.state_id,
+                      code: state.code
+                    },
+                    geometry
+                  };
+                } catch (err) {
+                  console.error(`❌ Erro ao processar geometria do estado ${state.name}:`, err);
+                  return null;
+                }
+              })
+              .filter(feature => feature !== null); // Remover features inválidas
             
             geoJSON = {
               type: 'FeatureCollection',
@@ -95,13 +116,14 @@ export default function StateBoundaries({ countryId, zoom }) {
   }
 
   const getStateStyle = (feature) => {
+    // ✅ FASE 19.4: Estilo visível mesmo em zoom baixo
     return {
       fillColor: '#4A90E2',
-      fillOpacity: 0.1,
+      fillOpacity: 0.15, // ✅ Levemente mais opaco para ver de longe
       color: '#2563EB',
-      weight: 2,
-      opacity: 0.6,
-      dashArray: '5, 5'
+      weight: 1.5, // ✅ Bordas mais finas para não poluir
+      opacity: 0.7, // ✅ Bordas mais visíveis
+      dashArray: '4, 4' // ✅ Padrão tracejado visível
     };
   };
 
